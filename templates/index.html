@@ -1,0 +1,3430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Egg Incubator</title>
+  <!-- Librerie servite da static/: il Raspberry dell'incubatrice può non avere
+       accesso a internet e dai CDN non arriverebbe nulla (niente socket.io =
+       pagina che si apre ma non si aggiorna mai). Versioni: Bootstrap 5.3.2,
+       Socket.IO 4.7.2, Plotly 2.32.0 -->
+  <link href="{{ url_for('static', filename='bootstrap.min.css') }}" rel="stylesheet">
+  <script>
+    // Tema applicato prima del primo disegno: se aspettasse lo script in fondo
+    // alla pagina si vedrebbe un lampo del tema sbagliato a ogni ricarica.
+    (function () {
+      var t = localStorage.getItem('incubatorTheme');
+      document.documentElement.dataset.theme =
+        (t === 'light' || t === 'midnight' || t === 'meadow' || t === 'dark') ? t : 'dark';
+    })();
+  </script>
+  <style>
+    /* ── Design tokens ──────────────────────────────────────────────────────
+       Ogni tema ridefinisce lo stesso identico set di variabili: il resto del
+       foglio di stile non conosce nessun colore, quindi cambiare tema vuol dire
+       solo cambiare l'attributo data-theme su <html>.
+       --amber è l'accento primario del tema, non necessariamente ambra. */
+
+    /* Token di layout: non dipendono dal tema */
+    :root { --sidebar-w: 194px; }
+
+    /* Tema 1 – Dark (predefinito, quello storico)
+       [data-preview] è l'anteprima nel selettore dei temi: ridichiara le stesse
+       variabili in locale, così i campioni mostrano i colori di QUEL tema anche
+       mentre è attivo un altro. */
+    :root,
+    html[data-theme="dark"],
+    [data-preview="dark"] {
+      --bg:          #0e0c08;
+      --surface:     #17140d;
+      --card:        #221d12;
+      --border:      #3d3520;
+      --amber:       #f5a623;
+      --heat:        #e85c2a;
+      --blue:        #4da6ff;
+      --green:       #3ecb7a;
+      --red:         #e84848;
+      --purple:      #c090f8;
+      --muted:       #8a8070;
+      --text:        #ede8d8;
+      /* testo sopra un fondo pieno di --amber (es. giorno corrente sul calendario) */
+      --on-accent:   #0e0c08;
+      /* separatore più tenue del bordo delle card */
+      --hairline:    rgba(61,53,32,.55);
+      --accent-weak: rgba(245,166,35,.07);
+      --accent-soft: rgba(245,166,35,.13);
+      --accent-bd:   rgba(245,166,35,.32);
+      --heat-bg:     rgba(232,92,42,.15);
+      --heat-bd:     rgba(232,92,42,.30);
+      --blue-bg:     rgba(77,166,255,.12);
+      --blue-bd:     rgba(77,166,255,.30);
+      --green-bg:    rgba(62,203,122,.14);
+      --green-bd:    rgba(62,203,122,.30);
+      --red-bg:      rgba(232,72,72,.12);
+      --red-bd:      rgba(232,72,72,.30);
+      --red-bg-hi:   rgba(232,72,72,.22);
+      --muted-bg:    rgba(138,128,112,.07);
+      --water-fill:    rgba(77,166,255,.25);
+      --water-surface: rgba(77,166,255,.50);
+      --card-shadow: none;
+    }
+
+    /* Tema 2 – Light: accenti scuriti per tenere il contrasto su fondo chiaro */
+    html[data-theme="light"],
+    [data-preview="light"] {
+      --bg:          #f1eee4;
+      --surface:     #ffffff;
+      --card:        #ffffff;
+      --border:      #dcd4c2;
+      --amber:       #a26705;
+      --heat:        #bf4419;
+      --blue:        #1566c2;
+      --green:       #1a8449;
+      --red:         #bf2b2b;
+      --purple:      #6a43b4;
+      --muted:       #6f6656;
+      --text:        #241f16;
+      --on-accent:   #fffdf6;
+      --hairline:    rgba(120,108,84,.22);
+      --accent-weak: rgba(162,103,5,.07);
+      --accent-soft: rgba(162,103,5,.13);
+      --accent-bd:   rgba(162,103,5,.35);
+      --heat-bg:     rgba(191,68,25,.10);
+      --heat-bd:     rgba(191,68,25,.32);
+      --blue-bg:     rgba(21,102,194,.10);
+      --blue-bd:     rgba(21,102,194,.32);
+      --green-bg:    rgba(26,132,73,.11);
+      --green-bd:    rgba(26,132,73,.32);
+      --red-bg:      rgba(191,43,43,.10);
+      --red-bd:      rgba(191,43,43,.32);
+      --red-bg-hi:   rgba(191,43,43,.20);
+      --muted-bg:    rgba(111,102,86,.08);
+      --water-fill:    rgba(21,102,194,.22);
+      --water-surface: rgba(21,102,194,.50);
+      --card-shadow: 0 1px 2px rgba(60,50,30,.05);
+    }
+
+    /* Tema 3 – Midnight: scuro freddo, accento primario turchese */
+    html[data-theme="midnight"],
+    [data-preview="midnight"] {
+      --bg:          #080b14;
+      --surface:     #0f1422;
+      --card:        #151c2e;
+      --border:      #2a3348;
+      --amber:       #4fd6c0;
+      --heat:        #ff7a59;
+      --blue:        #6aa6ff;
+      --green:       #49d67f;
+      --red:         #ff6b6b;
+      --purple:      #b98bff;
+      --muted:       #8a94ad;
+      --text:        #e4eaf6;
+      --on-accent:   #06121a;
+      --hairline:    rgba(42,51,72,.75);
+      --accent-weak: rgba(79,214,192,.07);
+      --accent-soft: rgba(79,214,192,.13);
+      --accent-bd:   rgba(79,214,192,.32);
+      --heat-bg:     rgba(255,122,89,.14);
+      --heat-bd:     rgba(255,122,89,.30);
+      --blue-bg:     rgba(106,166,255,.12);
+      --blue-bd:     rgba(106,166,255,.30);
+      --green-bg:    rgba(73,214,127,.13);
+      --green-bd:    rgba(73,214,127,.30);
+      --red-bg:      rgba(255,107,107,.12);
+      --red-bd:      rgba(255,107,107,.30);
+      --red-bg-hi:   rgba(255,107,107,.22);
+      --muted-bg:    rgba(138,148,173,.08);
+      --water-fill:    rgba(106,166,255,.25);
+      --water-surface: rgba(106,166,255,.50);
+      --card-shadow: none;
+    }
+
+    /* Tema 4 – Meadow: vicino al tema Light (fondo chiaro, card bianche,
+       ombra leggera) ma con tinta verde. --green resta un verde oliva/lime
+       distinto dall'accento pino, cosi' i due non si confondono. */
+    html[data-theme="meadow"],
+    [data-preview="meadow"] {
+      --bg:          #eef3e6;
+      --surface:     #f7faf2;
+      --card:        #ffffff;
+      --border:      #cfe0c2;
+      --amber:       #2e7d4f;
+      --heat:        #bf4419;
+      --blue:        #1566c2;
+      --green:       #4c9a2a;
+      --red:         #bf2b2b;
+      --purple:      #6a43b4;
+      --muted:       #5f6f56;
+      --text:        #1f2b1a;
+      --on-accent:   #fbfff5;
+      --hairline:    rgba(95,111,86,.22);
+      --accent-weak: rgba(46,125,79,.07);
+      --accent-soft: rgba(46,125,79,.13);
+      --accent-bd:   rgba(46,125,79,.35);
+      --heat-bg:     rgba(191,68,25,.10);
+      --heat-bd:     rgba(191,68,25,.32);
+      --blue-bg:     rgba(21,102,194,.10);
+      --blue-bd:     rgba(21,102,194,.32);
+      --green-bg:    rgba(76,154,42,.11);
+      --green-bd:    rgba(76,154,42,.32);
+      --red-bg:      rgba(191,43,43,.10);
+      --red-bd:      rgba(191,43,43,.32);
+      --red-bg-hi:   rgba(191,43,43,.20);
+      --muted-bg:    rgba(95,111,86,.08);
+      --water-fill:    rgba(21,102,194,.22);
+      --water-surface: rgba(21,102,194,.50);
+      --card-shadow: 0 1px 2px rgba(40,60,30,.06);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: .875rem;
+    }
+
+    /* ── Sidebar ───────────────────────────────────────────────────────── */
+    #sidebar {
+      position: fixed; top: 0; left: 0;
+      width: var(--sidebar-w); height: 100vh;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex; flex-direction: column;
+      z-index: 100;
+    }
+
+    .sb-brand {
+      padding: .9rem .85rem;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: .5rem;
+    }
+    .sb-brand .sb-logo { font-size: 1.3rem; }
+    .sb-brand .sb-name { font-size: .92rem; font-weight: 800; color: var(--amber); letter-spacing: -.01em; }
+    .sb-brand .sb-sub  { font-size: .68rem; color: var(--muted); font-weight: 400; }
+
+    .sb-section { font-size: .6rem; font-weight: 700; text-transform: uppercase; letter-spacing: .09em; color: var(--muted); padding: .55rem .85rem .15rem; }
+
+    .sb-nav { flex: 1; list-style: none; margin: 0; padding: .35rem 0; overflow-y: auto; }
+
+    .sb-nav li {
+      display: flex; align-items: center; gap: .48rem;
+      padding: .46rem .75rem;
+      margin: 1px 5px;
+      border-radius: 7px; border-left: 2px solid transparent;
+      cursor: pointer; color: var(--muted);
+      font-weight: 500; font-size: .81rem;
+      transition: background .12s, color .12s;
+      user-select: none;
+    }
+    .sb-nav li:hover   { background: var(--accent-weak); color: var(--text); }
+    .sb-nav li.active  { background: var(--accent-soft); color: var(--amber); border-left-color: var(--amber); }
+    .sb-nav li .ico    { width: 1.1rem; text-align: center; flex-shrink: 0; font-size: .88rem; }
+
+    .sb-footer {
+      padding: .6rem .85rem;
+      border-top: 1px solid var(--border);
+      font-size: .72rem;
+    }
+    .conn-row { display: flex; align-items: center; gap: .4rem; margin-bottom: .2rem; }
+    #conn-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--red); flex-shrink: 0;
+      transition: background .3s, box-shadow .3s;
+    }
+    #conn-dot.ok { background: var(--green); box-shadow: 0 0 5px var(--green); }
+    #conn-lbl  { color: var(--muted); }
+    #sys-time  { color: var(--muted); font-size: .69rem; font-variant-numeric: tabular-nums; }
+
+    /* ── Main content ──────────────────────────────────────────────────── */
+    #content { margin-left: var(--sidebar-w); min-height: 100vh; padding: 1.15rem 1.3rem 2rem; }
+
+    .page        { display: none; }
+    .page.active { display: block; }
+
+    .page-title {
+      font-size: 1rem; font-weight: 700;
+      margin-bottom: 1rem; padding-bottom: .45rem;
+      border-bottom: 1px solid var(--border);
+      color: var(--amber);
+      display: flex; align-items: center; gap: .45rem;
+    }
+
+    /* ── Generic card ──────────────────────────────────────────────────── */
+    .gcard { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: .85rem 1rem; box-shadow: var(--card-shadow); }
+    .gcard-title { font-size: .67rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: .6rem; }
+
+    /* ── KPI box ───────────────────────────────────────────────────────── */
+    .kpi { background: var(--card); border: 1px solid var(--border); border-radius: 9px; padding: .65rem .85rem; }
+    .kpi .kpi-lbl { font-size: .62rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: .2rem; }
+    .kpi .kpi-val { font-size: 1.05rem; font-weight: 700; color: var(--blue); }
+
+    /* ── Temperature sensor tile ───────────────────────────────────────── */
+    .temp-tile {
+      background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+      padding: .65rem .5rem; text-align: center; position: relative;
+      transition: border-color .2s;
+    }
+    .temp-tile:hover { border-color: var(--amber); }
+    .temp-tile .tl-name { font-size: .59rem; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin-bottom: .2rem; }
+    .temp-tile .tl-val  { font-size: 1.45rem; font-weight: 800; color: var(--amber); line-height: 1; }
+    .temp-tile .tl-val.ext { color: var(--purple); }
+    /* Riferimento di controllo, non una misura: bordo tratteggiato e stesso
+       colore della tacca di setpoint sul gauge, come le linee tratteggiate dei grafici */
+    .temp-tile.ref         { border-style: dashed; }
+    .temp-tile.ref:hover   { border-color: var(--text); }
+    .temp-tile .tl-val.sp  { color: var(--text); }
+    .temp-tile .tl-unit { font-size: .63rem; color: var(--muted); margin-top: .04rem; }
+    .temp-tile .tl-dot  { position: absolute; top: 6px; right: 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+    .temp-tile .tl-dot.err { background: var(--red); }
+
+    /* ── Status pill ───────────────────────────────────────────────────── */
+    .spill {
+      display: inline-flex; align-items: center; gap: .3rem;
+      padding: .24rem .58rem; border-radius: 20px;
+      font-size: .72rem; font-weight: 600; white-space: nowrap;
+    }
+    .spill.on       { background: var(--heat-bg);  color: var(--heat);  border: 1px solid var(--heat-bd); }
+    .spill.on.hum   { background: var(--blue-bg);  color: var(--blue);  border: 1px solid var(--blue-bd); }
+    .spill.on.vlv   { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-bd); }
+    .spill.off      { background: var(--muted-bg); color: var(--muted); border: 1px solid var(--border); }
+    .spill .dot     { width: 5px; height: 5px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+    .spill.on .dot  { animation: pulse 1.6s infinite; }
+
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+    /* ── Progress / bar ────────────────────────────────────────────────── */
+    .t-bar  { height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; margin: .55rem 0 .25rem; }
+    .t-fill { height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--amber), var(--heat)); transition: width .6s ease; }
+
+    .dc-bar  { height: 7px; background: var(--border); border-radius: 4px; overflow: hidden; }
+    .dc-fill { height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--amber), var(--heat)); transition: width .4s ease; }
+
+    /* ── Spinbox row ───────────────────────────────────────────────────── */
+    .sb-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: .37rem 0; border-bottom: 1px solid var(--hairline);
+    }
+    .sb-row:last-child { border-bottom: none; }
+    .sb-lbl { color: var(--text); font-size: .82rem; }
+    .sb-inp { width: 100px; text-align: right; }
+
+    /* ── Setpoint control ──────────────────────────────────────────────────
+       Stessa grandezza regolabile della pagina di controllo, ma in formato
+       compatto per la dashboard: i bottoni ± evitano di dover digitare. */
+    .sp-ctl {
+      display: flex; align-items: center; justify-content: center;
+      gap: .3rem; width: 100%;
+    }
+    .sp-ctl + .sp-ctl { margin-top: .35rem; }
+    /* Ultimo elemento della card: si appoggia al fondo, così i set point delle
+       card affiancate restano sulla stessa riga anche se il contenuto sopra ha
+       altezze diverse. Il padding tiene la spaziatura quando le card sono
+       impilate (mobile) e non c'è spazio libero da assorbire. */
+    .sp-ctl.at-bottom { margin-top: auto; padding-top: .85rem; }
+    .sp-ctl .sp-lbl {
+      font-size: .62rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .06em; color: var(--muted);
+      flex: 1; text-align: right; white-space: nowrap;
+    }
+    .sp-ctl .sp-step {
+      width: 26px; height: 26px; flex-shrink: 0;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+      color: var(--text); font-size: .95rem; font-weight: 700; line-height: 1;
+      cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+      transition: border-color .12s, color .12s;
+    }
+    .sp-ctl .sp-step:hover { border-color: var(--amber); color: var(--amber); }
+    .sp-ctl .sp-inp {
+      width: 66px; flex-shrink: 0; text-align: center;
+      padding: .2rem .25rem; font-weight: 700; font-variant-numeric: tabular-nums;
+    }
+    /* le frecce native sono ridondanti: ci sono già i bottoni ± */
+    .sp-ctl .sp-inp { -moz-appearance: textfield; }
+    .sp-ctl .sp-inp::-webkit-outer-spin-button,
+    .sp-ctl .sp-inp::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    .sp-ctl .sp-unit { font-size: .68rem; color: var(--muted); flex: 1; white-space: nowrap; }
+
+    /* ── Form controls (seguono il tema) ───────────────────────────────── */
+    .form-control, .form-select {
+      background: var(--surface) !important; border-color: var(--border) !important;
+      color: var(--text) !important; font-size: .82rem;
+    }
+    .form-control:focus, .form-select:focus {
+      border-color: var(--amber) !important;
+      box-shadow: 0 0 0 2px var(--accent-soft) !important;
+    }
+    .form-check-input { background-color: var(--surface); border-color: var(--border); }
+    .form-check-input:checked { background-color: var(--amber); border-color: var(--amber); }
+    .form-check-label { color: var(--text); font-size: .82rem; }
+
+    /* ── Info row ──────────────────────────────────────────────────────── */
+    .info-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: .33rem 0; border-bottom: 1px solid var(--hairline); font-size: .81rem;
+    }
+    .info-row:last-child { border-bottom: none; }
+    .info-row .il { color: var(--muted); }
+    .info-row .iv { color: var(--amber); font-weight: 600; }
+
+    /* ── Motor button ──────────────────────────────────────────────────── */
+    .mbtn {
+      display: block; width: 100%; padding: .55rem .75rem;
+      background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+      color: var(--text); font-weight: 600; font-size: .8rem; text-align: center;
+      cursor: pointer; transition: border-color .14s, color .14s, background .14s;
+    }
+    .mbtn:hover  { border-color: var(--amber); color: var(--amber); }
+    .mbtn.active { background: var(--accent-soft); border-color: var(--amber); color: var(--amber); }
+
+    /* ── Stats table ───────────────────────────────────────────────────── */
+    .stbl { width: 100%; border-collapse: collapse; font-size: .79rem; }
+    .stbl th {
+      font-size: .64rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .05em; color: var(--muted);
+      padding: .3rem .45rem; border-bottom: 1px solid var(--border); text-align: right;
+    }
+    .stbl th:first-child { text-align: left; }
+    .stbl td {
+      padding: .3rem .45rem; border-bottom: 1px solid var(--hairline);
+      color: var(--text); text-align: right;
+    }
+    .stbl td:first-child { text-align: left; color: var(--muted); }
+    .stbl .sv { color: var(--amber); font-weight: 600; }
+
+    /* ── Utility buttons ───────────────────────────────────────────────── */
+    .btn-dk {
+      background: var(--surface); border: 1px solid var(--border);
+      color: var(--text); font-size: .76rem; border-radius: 6px;
+      padding: .27rem .58rem; cursor: pointer; transition: border-color .12s, color .12s;
+    }
+    .btn-dk:hover { border-color: var(--amber); color: var(--amber); }
+    .btn-dk:disabled { opacity: .4; cursor: not-allowed; }
+    .btn-dk:disabled:hover { border-color: var(--border); color: var(--text); }
+    .btn-danger-dk {
+      background: var(--red-bg); border: 1px solid var(--red-bd);
+      color: var(--red); font-size: .76rem; border-radius: 6px;
+      padding: .27rem .58rem; cursor: pointer;
+    }
+    .btn-danger-dk:hover { background: var(--red-bg-hi); }
+
+    /* ── Delta badge ───────────────────────────────────────────────────── */
+    .delta-badge {
+      display: inline-flex; align-items: center; gap: .2rem;
+      font-size: .71rem; font-weight: 700;
+      padding: .14rem .42rem; border-radius: 5px;
+    }
+    .delta-badge.cold { background: var(--blue-bg);  color: var(--blue); }
+    .delta-badge.warm { background: var(--heat-bg);  color: var(--heat); }
+    .delta-badge.ok   { background: var(--green-bg); color: var(--green); }
+
+    /* ── Health item ───────────────────────────────────────────────────── */
+    .health-item {
+      display: flex; align-items: center; gap: .55rem;
+      padding: .48rem 0; border-bottom: 1px solid var(--hairline); font-size: .81rem;
+    }
+    .health-item:last-child { border-bottom: none; }
+    .health-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+    .health-dot.ok   { background: var(--green); }
+    .health-dot.warn { background: var(--amber); }
+    .health-dot.err  { background: var(--red); }
+    .health-lbl { color: var(--muted); flex: 1; }
+    .health-val { color: var(--text); font-weight: 600; }
+
+    /* ── Motor compass ─────────────────────────────────────────────────── */
+    .motor-compass { width: 90px; height: 90px; margin: 0 auto; }
+    .motor-arrow-group { transition: opacity .12s; }
+    /* colore a riposo: quando il motore gira il JS scrive su .style e vince */
+    .motor-arrow-group path    { stroke: var(--border); }
+    .motor-arrow-group polygon { fill:   var(--border); }
+    .motor-arrow-group.blinking { animation: motorArrowBlink .85s ease-in-out infinite; }
+    @keyframes motorArrowBlink { 0%, 100% { opacity: 1; } 50% { opacity: .18; } }
+    .motor-reach-light { transition: fill .2s, filter .2s; }
+    #lightCCW.lit { fill: var(--purple); filter: drop-shadow(0 0 3px var(--purple)); }
+    #lightCW.lit  { fill: var(--amber);  filter: drop-shadow(0 0 3px var(--amber)); }
+
+    /* ── Mobile ────────────────────────────────────────────────────────── */
+    @media (max-width: 768px) {
+      #sidebar       { transform: translateX(-100%); transition: transform .22s; }
+      #sidebar.open  { transform: translateX(0); }
+      #content       { margin-left: 0; }
+      #hbg           { display: flex !important; }
+    }
+    #hbg {
+      display: none; position: fixed; top: .6rem; left: .6rem; z-index: 200;
+      background: var(--card); border: 1px solid var(--border);
+      color: var(--amber); border-radius: 6px;
+      padding: .24rem .5rem; font-size: 1rem; cursor: pointer;
+      align-items: center;
+    }
+
+    /* ── Incubation calendar ─────────────────────────────────────────────── */
+    .inc-cal {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 2.5rem;
+    }
+
+    .inc-cal-month h4 {
+      font-size: 1rem; font-weight: 700; color: var(--amber);
+      text-align: center; margin: 0 0 .7rem; letter-spacing: .03em;
+    }
+    .inc-cal-grid {
+      display: grid; grid-template-columns: repeat(7, 1fr);
+      gap: 4px; text-align: center;
+    }
+    .inc-cal-hdr { font-size: .75rem; color: var(--muted); padding: .25rem 0; font-weight: 600; }
+    .inc-cal-day {
+      border-radius: 4px; padding: .55rem .1rem;
+      font-size: .9rem; line-height: 1.3; cursor: default;
+      color: var(--muted);
+    }
+    .inc-cal-day.passed {
+      background: var(--green-bg); color: var(--green); font-weight: 600;
+    }
+    .inc-cal-day.today {
+      background: var(--amber); color: var(--on-accent);
+      font-weight: 800; border-radius: 50%;
+    }
+    .inc-cal-day.remain {
+      background: var(--red-bg); color: var(--red); font-weight: 500;
+    }
+    .inc-cal-day.start-d { outline: 1.5px solid var(--blue); outline-offset: -1px; }
+    .inc-cal-day.end-d   { outline: 1.5px solid var(--red);  outline-offset: -1px; }
+
+    /* ── Language switch ───────────────────────────────────────────────── */
+    #langSwitch {
+      position: fixed; top: .6rem; right: .8rem; z-index: 200;
+      display: flex; gap: .3rem;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: .25rem;
+    }
+    .lang-flag {
+      background: transparent; border: 1px solid transparent; border-radius: 6px;
+      font-size: .72rem; font-weight: 700; line-height: 1; padding: .25rem .5rem;
+      cursor: pointer; display: inline-flex; align-items: center; gap: .3rem;
+      color: var(--muted);
+      opacity: .5; transition: opacity .15s, border-color .15s, background .15s, color .15s;
+    }
+    .lang-flag.active { color: var(--text); }
+    .lang-flag:hover { opacity: .85; }
+    .lang-flag.active { opacity: 1; border-color: var(--amber); background: var(--accent-weak); }
+
+    /* ── SVG che segue il tema ───────────────────────────────────────────────
+       Gli attributi di presentazione SVG (fill="…", stroke="…") hanno priorità
+       più bassa di qualsiasi regola CSS, quindi bastano queste classi per far
+       cambiare colore ai disegni statici. Gli elementi il cui colore è deciso
+       a runtime dal JS (arco del gauge, frecce del motore) NON usano queste
+       classi: lì il JS scrive su element.style, che vince su tutto. */
+    .svg-muted  { fill: var(--muted); }
+    .svg-text   { fill: var(--text); }
+    .svg-blue   { fill: var(--blue); }
+    .svg-track      { stroke: var(--border); }
+    .svg-track-fill { fill: var(--border); }
+    .svg-ref        { stroke: var(--text); }
+    .svg-arc-blue   { stroke: var(--blue); }
+    .svg-card-fill  { fill: var(--card); }
+    /* linea e etichetta separate: dare stroke anche al testo lo ingrasserebbe */
+    .svg-max line { stroke: var(--green); }
+    .svg-max text { fill:   var(--green); }
+    .svg-min line { stroke: var(--red); }
+    .svg-min text { fill:   var(--red); }
+    #waterFillRect { fill: var(--water-fill); }
+    #waterSurface  { fill: var(--water-surface); }
+
+    /* ── Selettore del tema (pagina Settings) ──────────────────────────────── */
+    .theme-grid { display: flex; gap: .7rem; flex-wrap: wrap; }
+    .theme-card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+      padding: .6rem .7rem; cursor: pointer; text-align: left;
+      min-width: 158px; color: var(--text);
+      transition: border-color .14s, background .14s;
+    }
+    .theme-card:hover  { border-color: var(--amber); }
+    .theme-card.active { border-color: var(--amber); background: var(--accent-soft); }
+    .theme-card .th-name {
+      font-size: .82rem; font-weight: 700; display: flex; align-items: center; gap: .35rem;
+    }
+    .theme-card .th-desc { font-size: .68rem; color: var(--muted); margin-top: .12rem; }
+    .theme-card .th-check { color: var(--amber); font-size: .8rem; opacity: 0; margin-left: auto; }
+    .theme-card.active .th-check { opacity: 1; }
+    /* Anteprima: gli stessi colori del tema, presi dal tema stesso invece che
+       ricopiati a mano, così non possono andare fuori sincrono. */
+    .theme-swatch {
+      display: flex; gap: 3px; margin-top: .45rem;
+      border-radius: 5px; overflow: hidden;
+    }
+    .theme-swatch span { width: 22px; height: 14px; border-radius: 3px; display: block; }
+    .sw-bg     { background: var(--bg);     border: 1px solid var(--border); }
+    .sw-card   { background: var(--card);   border: 1px solid var(--border); }
+    .sw-accent { background: var(--amber); }
+    .sw-blue   { background: var(--blue); }
+    .sw-green  { background: var(--green); }
+    .sw-text   { background: var(--text); }
+
+    /* ── Modalità leggera (?lite=1) ────────────────────────────────────────
+       Per il browser che gira sul Raspberry. Un'animazione `infinite`, anche
+       su un pallino di 5 px, obbliga Chromium a ricomporre la pagina a ogni
+       frame: dove la rasterizzazione è in software (Pi 3) costa CPU in
+       continuazione, senza che succeda nulla di nuovo sullo schermo.
+       Gli stati restano leggibili: il pallino acceso resta acceso, solo fermo. */
+    html[data-lite] *,
+    html[data-lite] *::before,
+    html[data-lite] *::after {
+      animation: none !important;
+      transition: none !important;
+    }
+    html[data-lite] #lightCCW.lit,
+    html[data-lite] #lightCW.lit,
+    html[data-lite] .motor-reach-light { filter: none !important; }
+    html[data-lite] .gcard,
+    html[data-lite] #conn-dot.ok { box-shadow: none !important; }
+    /* Il numero che cambia dentro una card non deve poter obbligare il browser a
+       ricalcolare il layout di tutta la pagina: `contain` chiude il conto dentro
+       la card. Solo layout e style, non `paint`: quello ritaglierebbe ciò che
+       sporge dal riquadro. */
+    html[data-lite] .gcard,
+    html[data-lite] .kpi,
+    html[data-lite] .temp-tile { contain: layout style; }
+
+  </style>
+</head>
+<body>
+
+<button id="hbg" onclick="document.getElementById('sidebar').classList.toggle('open')">☰</button>
+
+<div id="langSwitch">
+  <button class="lang-flag" id="flag_en" onclick="setLanguage('en')" title="English">
+    <svg viewBox="0 0 60 30" width="22" height="11" style="flex-shrink:0">
+      <rect width="60" height="30" fill="#012169"/>
+      <path d="M0,0 L60,30 M60,0 L0,30" stroke="#fff" stroke-width="6"/>
+      <path d="M0,0 L60,30 M60,0 L0,30" stroke="#C8102E" stroke-width="4"/>
+      <path d="M30,0 V30 M0,15 H60" stroke="#fff" stroke-width="10"/>
+      <path d="M30,0 V30 M0,15 H60" stroke="#C8102E" stroke-width="6"/>
+    </svg>ENG
+  </button>
+  <button class="lang-flag" id="flag_it" onclick="setLanguage('it')" title="Italiano">
+    <svg viewBox="0 0 3 2" width="22" height="14" style="flex-shrink:0">
+      <rect width="1" height="2" fill="#009246"/>
+      <rect x="1" width="1" height="2" fill="#fff"/>
+      <rect x="2" width="1" height="2" fill="#ce2b37"/>
+    </svg>ITA
+  </button>
+</div>
+
+<!-- ════════════════════════════ SIDEBAR ════════════════════════════════════ -->
+<nav id="sidebar">
+  <div class="sb-brand">
+    <div class="sb-logo">🥚</div>
+    <div>
+      <div class="sb-name">Incubator</div>
+      <div class="sb-sub">Control Panel</div>
+    </div>
+  </div>
+
+  <ul class="sb-nav" id="sideNav">
+    <div class="sb-section">Monitor</div>
+    <li class="active" data-pg="dashboard"><span class="ico">📊</span><span class="nav-lbl">Dashboard</span></li>
+    <li data-pg="chart"  ><span class="ico">📈</span><span class="nav-lbl">Live Chart</span></li>
+    <li data-pg="history"><span class="ico">🗂️</span><span class="nav-lbl">History</span></li>
+    <li data-pg="stats"  ><span class="ico">📋</span><span class="nav-lbl">Statistics</span></li>
+
+    <div class="sb-section">Control</div>
+    <li data-pg="temp"  ><span class="ico">🌡️</span><span class="nav-lbl">Temperature</span></li>
+    <li data-pg="water" ><span class="ico">💧</span><span class="nav-lbl">Water &amp; Humidity</span></li>
+    <li data-pg="motor" ><span class="ico">⚙️</span><span class="nav-lbl">Motor</span></li>
+
+    <div class="sb-section">Setup</div>
+    <li data-pg="days"  ><span class="ico">📅</span><span class="nav-lbl">Incubation</span></li>
+    <li data-pg="system"><span class="ico">🔧</span><span class="nav-lbl">System</span></li>
+    <li data-pg="settings"><span class="ico">🎨</span><span class="nav-lbl">Appearance</span></li>
+  </ul>
+
+  <div class="sb-footer">
+    <div class="conn-row">
+      <div id="conn-dot"></div>
+      <span id="conn-lbl">Disconnected</span>
+    </div>
+    <div id="sys-time">--:--:--</div>
+  </div>
+</nav>
+
+<!-- ════════════════════════════ MAIN CONTENT ═══════════════════════════════ -->
+<main id="content">
+
+  <!-- ════════════════════════ DASHBOARD ══════════════════════════════════════ -->
+  <div class="page active" id="page-dashboard">
+    <div class="page-title">📊 Dashboard</div>
+
+    <!-- Row 1: gauges + water tank -->
+    <div class="row g-2 mb-2">
+
+      <!-- Big temperature arc gauge -->
+      <div class="col-lg-4">
+        <div class="gcard h-100 d-flex flex-column align-items-center justify-content-center">
+          <div class="gcard-title w-100">Internal Temperature (avg)</div>
+          <svg id="tempGaugeSvg" viewBox="0 0 180 150" style="width:100%;max-width:220px" class="gauge-svg">
+            <!-- min/max labels -->
+            <text class="svg-muted" x="18" y="128" text-anchor="middle" font-size="9">30°</text>
+            <text class="svg-muted" x="162" y="128" text-anchor="middle" font-size="9">45°</text>
+            <!-- background track -->
+            <circle class="svg-track" cx="90" cy="90" r="62"
+              fill="none" stroke-width="10" stroke-linecap="round"
+              stroke-dasharray="290.4 97.2"
+              transform="rotate(135, 90, 90)"/>
+            <!-- value arc (colore deciso dal JS in base alla temperatura) -->
+            <circle id="tempGaugeArc" cx="90" cy="90" r="62"
+              fill="none" stroke="transparent" stroke-width="10" stroke-linecap="round"
+              stroke-dasharray="0 387.6"
+              transform="rotate(135, 90, 90)"/>
+            <!-- setpoint marker: tacca radiale sull'arco, nascosta finché il setpoint è ignoto -->
+            <line id="gaugeSpTick" class="svg-ref" x1="90" y1="90" x2="90" y2="90"
+              stroke-width="2" stroke-linecap="round" opacity="0">
+              <title id="gaugeSpTickTitle"></title>
+            </line>
+            <!-- center text -->
+            <text id="gaugeTempVal" class="svg-text" x="90" y="85" text-anchor="middle"
+              font-size="26" font-weight="800" font-family="sans-serif">--.-</text>
+            <text id="svgTempSubLabel" class="svg-muted" x="90" y="102" text-anchor="middle" font-size="9">°C  internal avg</text>
+            <!-- delta from setpoint -->
+            <text id="gaugeDelta" class="svg-muted" x="90" y="116" text-anchor="middle"
+              font-size="8">Δ SP: ---</text>
+          </svg>
+          <!-- sensor dots row -->
+          <div class="d-flex gap-2 mt-1 flex-wrap justify-content-center">
+            <div class="temp-tile" style="min-width:52px">
+              <div class="tl-name">T1</div><div class="tl-val" id="temp1">---</div><div class="tl-unit">°C</div>
+              <div class="tl-dot" id="dot1"></div>
+            </div>
+            <div class="temp-tile" style="min-width:52px">
+              <div class="tl-name">T2</div><div class="tl-val" id="temp2">---</div><div class="tl-unit">°C</div>
+              <div class="tl-dot" id="dot2"></div>
+            </div>
+            <div class="temp-tile" style="min-width:52px">
+              <div class="tl-name">T3</div><div class="tl-val" id="temp3">---</div><div class="tl-unit">°C</div>
+              <div class="tl-dot" id="dot3"></div>
+            </div>
+            <div class="temp-tile" style="min-width:52px">
+              <div class="tl-name">T4</div><div class="tl-val" id="temp4">---</div><div class="tl-unit">°C</div>
+              <div class="tl-dot" id="dot4"></div>
+            </div>
+            <div class="temp-tile" style="min-width:52px">
+              <div class="tl-name">EXT</div><div class="tl-val ext" id="externalTemp">---</div><div class="tl-unit">°C</div>
+            </div>
+            <!-- Setpoint: valore numerico della tacca sull'arco del gauge -->
+            <div class="temp-tile ref" style="min-width:52px" id="setpointTile">
+              <div class="tl-name">SET</div><div class="tl-val sp" id="setpointValue">---</div><div class="tl-unit">°C</div>
+            </div>
+          </div>
+
+          <!-- Duty cycle del riscaldatore: sta qui e non nel serbatoio perché è
+               l'uscita del controllo di temperatura. -->
+          <div class="w-100 mt-3">
+            <div class="d-flex justify-content-between" style="font-size:.67rem;color:var(--muted);margin-bottom:.25rem">
+              <span class="i18n-auto">Heater duty cycle</span>
+              <span id="pidDutyCycle">---</span>
+            </div>
+            <div class="dc-bar"><div class="dc-fill" id="dcFill" style="width:0%"></div></div>
+          </div>
+
+          <!-- Stesso parametro dello spinbox "Set Point" della pagina Temperature:
+               entrambi scrivono su setPointTemperature_PID_spinBox, quindi restano
+               allineati da soli tramite l'eco del server. -->
+          <div class="sp-ctl at-bottom">
+            <span class="sp-lbl">Set Point</span>
+            <button type="button" class="sp-step"
+              onclick="bumpSpinbox('setPointTemperature_PID_spinBox', -0.1, 1)">−</button>
+            <input type="number" step="0.1" class="form-control sp-inp"
+              data-sb="setPointTemperature_PID_spinBox"
+              onchange="sendSpinbox('setPointTemperature_PID_spinBox', this.value)">
+            <button type="button" class="sp-step"
+              onclick="bumpSpinbox('setPointTemperature_PID_spinBox', 0.1, 1)">+</button>
+            <span class="sp-unit">°C</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Humidity arc gauge -->
+      <div class="col-lg-4">
+        <div class="gcard h-100 d-flex flex-column align-items-center justify-content-center">
+          <div class="gcard-title w-100">Humidity &amp; Water</div>
+
+          <!-- Stessa geometria del gauge di temperatura (viewBox, raggio, spessore
+               e posizione dei testi): i due devono leggersi come una coppia. -->
+          <svg id="humGaugeSvg" viewBox="0 0 180 150" style="width:100%;max-width:220px" class="gauge-svg">
+            <!-- min/max labels -->
+            <text class="svg-muted" x="18" y="128" text-anchor="middle" font-size="9">0%</text>
+            <text class="svg-muted" x="162" y="128" text-anchor="middle" font-size="9">100%</text>
+            <!-- background track -->
+            <circle class="svg-track" cx="90" cy="90" r="62"
+              fill="none" stroke-width="10" stroke-linecap="round"
+              stroke-dasharray="290.4 97.2"
+              transform="rotate(135, 90, 90)"/>
+            <!-- value arc: parte trasparente come quello della temperatura, così
+                 con arco a zero il linecap tondo non lascia un pallino blu -->
+            <circle id="humGaugeArc" class="svg-arc-blue" cx="90" cy="90" r="62"
+              fill="none" style="stroke:transparent" stroke-width="10" stroke-linecap="round"
+              stroke-dasharray="0 387.6"
+              transform="rotate(135, 90, 90)"/>
+            <!-- setpoint marker: stessa tacca radiale del gauge temperatura -->
+            <line id="gaugeHumSpTick" class="svg-ref" x1="90" y1="90" x2="90" y2="90"
+              stroke-width="2" stroke-linecap="round" opacity="0">
+              <title id="gaugeHumSpTickTitle"></title>
+            </line>
+            <!-- center text -->
+            <text id="gaugeHumVal" class="svg-text" x="90" y="85" text-anchor="middle"
+              font-size="26" font-weight="800" font-family="sans-serif">--%</text>
+            <text id="svgHumSubLabel" class="svg-muted" x="90" y="102" text-anchor="middle" font-size="9">relative humidity</text>
+            <!-- delta from setpoint -->
+            <text id="gaugeHumDelta" class="svg-muted" x="90" y="116" text-anchor="middle"
+              font-size="8">Δ SP: ---</text>
+          </svg>
+
+          <!-- mt-auto: questa card ha meno contenuto della gemella a sinistra;
+               spartendo lo spazio libero fra qui e il set point in fondo, lo
+               stacco non si concentra tutto in un buco solo. -->
+          <div class="d-flex gap-3 justify-content-center mt-auto w-100">
+            <div class="kpi text-center" style="flex:1">
+              <div class="kpi-lbl">Hum Sensor T</div>
+              <div class="kpi-val" style="font-size:.9rem" id="tempFromHumidity">---</div>
+              <div style="font-size:.65rem;color:var(--muted)">°C</div>
+            </div>
+            <div class="kpi text-center" style="flex:1">
+              <div class="kpi-lbl">Hum. Ctrl</div>
+              <span class="spill off" id="humidifierStatus"><span class="dot"></span>OFF</span>
+            </div>
+          </div>
+
+          <!-- Setpoint umidità: è il centro della banda di isteresi min/max della
+               pagina Water & Humidity. Spostandolo la banda trasla mantenendo
+               la sua ampiezza, e i limiti là si aggiornano da soli.
+               Ultima riga della card, come il Set Point della temperatura: così
+               i due controlli restano allineati sulla stessa orizzontale. -->
+          <div class="sp-ctl at-bottom">
+            <span class="sp-lbl">Set Point</span>
+            <button type="button" class="sp-step"
+              onclick="bumpSpinbox('setPointHumidity_spinBox', -1, 1)">−</button>
+            <input type="number" step="0.5" class="form-control sp-inp"
+              data-sb="setPointHumidity_spinBox"
+              onchange="sendSpinbox('setPointHumidity_spinBox', this.value)">
+            <button type="button" class="sp-step"
+              onclick="bumpSpinbox('setPointHumidity_spinBox', 1, 1)">+</button>
+            <span class="sp-unit">%</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Water tank SVG + valve -->
+      <div class="col-lg-4">
+        <div class="gcard h-100 d-flex flex-column align-items-center justify-content-center">
+          <div class="gcard-title w-100">Water Reservoir</div>
+
+          <div class="d-flex align-items-center gap-3">
+            <!-- Tank SVG -->
+            <svg viewBox="0 0 70 130" style="width:78px;flex-shrink:0">
+              <!-- Tank body -->
+              <rect class="svg-track" x="8" y="8" width="54" height="112" rx="6"
+                fill="none" stroke-width="2"/>
+              <!-- Fill clip region (inside) -->
+              <defs>
+                <clipPath id="tankClip">
+                  <rect x="9" y="9" width="52" height="110" rx="5"/>
+                </clipPath>
+              </defs>
+              <!-- Water fill -->
+              <rect id="waterFillRect" x="9" y="90" width="52" height="29"
+                clip-path="url(#tankClip)"/>
+              <!-- Water surface shimmer -->
+              <rect id="waterSurface" x="9" y="90" width="52" height="3"
+                clip-path="url(#tankClip)"/>
+              <!-- Grid lines: 3 / 2 / 1 kg sulla scala 0–4 kg del serbatoio -->
+              <line class="svg-track" x1="8" y1="36" x2="62" y2="36" stroke-width=".8" stroke-dasharray="4,3"/>
+              <line class="svg-track" x1="8" y1="64" x2="62" y2="64" stroke-width=".8" stroke-dasharray="4,3"/>
+              <line class="svg-track" x1="8" y1="92" x2="62" y2="92" stroke-width=".8" stroke-dasharray="4,3"/>
+              <!-- Scale labels -->
+              <text class="svg-muted" x="5" y="39"  text-anchor="end" font-size="6">3kg</text>
+              <text class="svg-muted" x="5" y="67"  text-anchor="end" font-size="6">2kg</text>
+              <text class="svg-muted" x="5" y="95"  text-anchor="end" font-size="6">1kg</text>
+              <!-- Limiti di isteresi dell'elettrovalvola: sopra il MAX chiude,
+                   sotto il MIN riapre. Disegnati sopra l'acqua per restare leggibili. -->
+              <g id="waterMaxMark" class="svg-max" opacity="0">
+                <line id="waterMaxLine" x1="8" y1="0" x2="62" y2="0"
+                  stroke-width="1.6" stroke-dasharray="5,2.5"/>
+                <text id="waterMaxLbl" x="60" y="0" text-anchor="end"
+                  font-size="6" font-weight="700">MAX</text>
+              </g>
+              <g id="waterMinMark" class="svg-min" opacity="0">
+                <line id="waterMinLine" x1="8" y1="0" x2="62" y2="0"
+                  stroke-width="1.6" stroke-dasharray="5,2.5"/>
+                <text id="waterMinLbl" x="60" y="0" text-anchor="end"
+                  font-size="6" font-weight="700">MIN</text>
+              </g>
+              <!-- Value text -->
+              <text id="waterTankPct" class="svg-blue" x="35" y="75" text-anchor="middle"
+                font-size="10" font-weight="700">--%</text>
+            </svg>
+
+            <!-- Right column -->
+            <div style="flex:1">
+              <div class="kpi mb-2">
+                <div class="kpi-lbl">Water Weight</div>
+                <div class="kpi-val" id="waterWeight">---</div>
+                <div style="font-size:.65rem;color:var(--muted)">kg</div>
+              </div>
+              <div class="kpi mb-2">
+                <div class="kpi-lbl">Valve</div>
+                <span class="spill off" id="evalveStatus"><span class="dot"></span>OFF</span>
+              </div>
+              <div class="kpi">
+                <div class="kpi-lbl">Heater</div>
+                <span class="spill off" id="heaterStatus"><span class="dot"></span>OFF</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Limiti del livello acqua: stessi parametri della pagina
+               Water & Humidity (Water Level Hysteresis).
+               mt-auto come nelle due card gemelle: la card è in justify-content-center,
+               quindi senza un margine automatico che si prenda lo spazio libero tutto
+               il contenuto slitterebbe verso il basso e il titolo non sarebbe più sulla
+               stessa orizzontale degli altri due. pt-3 tiene lo stacco minimo di prima
+               quando invece spazio libero non ce n'è. -->
+          <div class="w-100 mt-auto pt-3">
+            <div class="sp-ctl">
+              <span class="sp-lbl">Max Level</span>
+              <button type="button" class="sp-step"
+                onclick="bumpSpinbox('maxHysteresisValue_waterLevelControl_spinBox', -0.1, 1)">−</button>
+              <input type="number" step="0.1" min="0" class="form-control sp-inp"
+                data-sb="maxHysteresisValue_waterLevelControl_spinBox"
+                onchange="sendSpinbox('maxHysteresisValue_waterLevelControl_spinBox', this.value)">
+              <button type="button" class="sp-step"
+                onclick="bumpSpinbox('maxHysteresisValue_waterLevelControl_spinBox', 0.1, 1)">+</button>
+              <span class="sp-unit">kg</span>
+            </div>
+            <div class="sp-ctl">
+              <span class="sp-lbl">Min Level</span>
+              <button type="button" class="sp-step"
+                onclick="bumpSpinbox('minHysteresisValue_waterLevelControl_spinBox', -0.1, 1)">−</button>
+              <input type="number" step="0.1" min="0" class="form-control sp-inp"
+                data-sb="minHysteresisValue_waterLevelControl_spinBox"
+                onchange="sendSpinbox('minHysteresisValue_waterLevelControl_spinBox', this.value)">
+              <button type="button" class="sp-step"
+                onclick="bumpSpinbox('minHysteresisValue_waterLevelControl_spinBox', 0.1, 1)">+</button>
+              <span class="sp-unit">kg</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Row 1.5: Fan speed gauge - ventole ricircolo aria, 0-100% via PWM su Arduino.
+         Stessa geometria e stesso pattern (arco + Set Point in fondo) dei tre gauge
+         sopra: qui non c'è un setpoint/misura separati, è un comando diretto, quindi
+         niente tacca né Δ. -->
+    <div class="row g-2 mb-2">
+      <div class="col-lg-4">
+        <div class="gcard h-100 d-flex flex-column align-items-center justify-content-center">
+          <div class="gcard-title w-100">Fan Speed</div>
+          <svg id="fanGaugeSvg" viewBox="0 0 180 150" style="width:100%;max-width:220px" class="gauge-svg">
+            <text class="svg-muted" x="18" y="128" text-anchor="middle" font-size="9">0%</text>
+            <text class="svg-muted" x="162" y="128" text-anchor="middle" font-size="9">100%</text>
+            <circle class="svg-track" cx="90" cy="90" r="62"
+              fill="none" stroke-width="10" stroke-linecap="round"
+              stroke-dasharray="290.4 97.2"
+              transform="rotate(135, 90, 90)"/>
+            <circle id="fanGaugeArc" class="svg-arc-blue" cx="90" cy="90" r="62"
+              fill="none" style="stroke:transparent" stroke-width="10" stroke-linecap="round"
+              stroke-dasharray="0 387.6"
+              transform="rotate(135, 90, 90)"/>
+            <text id="gaugeFanVal" class="svg-text" x="90" y="85" text-anchor="middle"
+              font-size="26" font-weight="800" font-family="sans-serif">--%</text>
+            <text id="svgFanSubLabel" class="svg-muted" x="90" y="102" text-anchor="middle" font-size="9">recirculation fans</text>
+          </svg>
+
+          <div class="sp-ctl at-bottom">
+            <span class="sp-lbl">Speed</span>
+            <button type="button" class="sp-step"
+              onclick="bumpSpinbox('fanSpeed_spinBox', -5, 0)">−</button>
+            <input type="number" step="1" min="0" max="100" class="form-control sp-inp"
+              data-sb="fanSpeed_spinBox"
+              onchange="sendSpinbox('fanSpeed_spinBox', this.value)">
+            <button type="button" class="sp-step"
+              onclick="bumpSpinbox('fanSpeed_spinBox', 5, 0)">+</button>
+            <span class="sp-unit">%</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Row 2: KPIs -->
+    <div class="row g-2 mb-2">
+      <div class="col-sm-3"><div class="kpi">
+        <div class="kpi-lbl">PID Process Value</div>
+        <div class="kpi-val" id="pidCurrentValue">---</div>
+        <div style="font-size:.65rem;color:var(--muted)">°C</div>
+      </div></div>
+      <div class="col-sm-3"><div class="kpi">
+        <div class="kpi-lbl">Heat Control Value</div>
+        <div class="kpi-val" id="heatCtrlVal">---</div>
+        <div style="font-size:.65rem;color:var(--muted)">°C</div>
+      </div></div>
+      <div class="col-sm-3"><div class="kpi">
+        <div class="kpi-lbl">Sensor Spread (ΔT)</div>
+        <div class="kpi-val" id="sensorSpread">---</div>
+        <div style="font-size:.65rem;color:var(--muted)">max − min</div>
+      </div></div>
+      <div class="col-sm-3"><div class="kpi">
+        <div class="kpi-lbl">Days Passed / Left</div>
+        <div class="kpi-val">
+          <span id="daysPassed_dash">--</span> / <span id="daysLeft_dash">--</span>
+        </div>
+        <div style="font-size:.65rem;color:var(--muted)" id="incPhase_dash">---</div>
+      </div></div>
+    </div>
+
+    <!-- Row 3: Incubation progress -->
+    <div class="gcard">
+      <div class="d-flex justify-content-between align-items-center mb-1">
+        <div class="gcard-title" style="margin-bottom:0">Incubation Progress</div>
+        <span id="timelinePct_dash" style="font-size:.72rem;color:var(--muted)">— %</span>
+      </div>
+      <div class="t-bar"><div class="t-fill" id="timelineFill_dash" style="width:0%"></div></div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════ TEMPERATURE ════════════════════════════════════ -->
+  <div class="page" id="page-temp">
+    <div class="page-title">🌡️ Temperature Control</div>
+
+    <div class="row g-3">
+      <!-- Left: controls -->
+      <div class="col-lg-5">
+        <div class="gcard mb-3">
+          <div class="gcard-title">Heater Mode</div>
+          <div class="d-flex gap-3 flex-wrap">
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="heaterMode" id="r_htrOFF"  value="heaterOFF_radioBtn">
+              <label class="form-check-label" for="r_htrOFF">OFF</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="heaterMode" id="r_htrAUTO" value="heaterAUTO_radioBtn">
+              <label class="form-check-label" for="r_htrAUTO">AUTO</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="heaterMode" id="r_htrON"   value="heaterON_radioBtn">
+              <label class="form-check-label" for="r_htrON">Force ON</label>
+            </div>
+          </div>
+        </div>
+
+        <div class="gcard mb-3">
+          <div class="gcard-title">Control Algorithm</div>
+          <div class="d-flex gap-4">
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="pidMode" id="r_hysteresis" value="hysteresisActive_radioBtn">
+              <label class="form-check-label" for="r_hysteresis">Hysteresis</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="pidMode" id="r_pid" value="PIDActive_radioBtn">
+              <label class="form-check-label" for="r_pid">PID + Feedforward</label>
+            </div>
+          </div>
+        </div>
+
+        <div class="gcard mb-3">
+          <div class="gcard-title">Hysteresis Limits</div>
+          <div class="sb-row">
+            <span class="sb-lbl">Upper limit (°C)</span>
+            <input type="number" step="0.1" class="form-control sb-inp"
+              id="sb_maxHysteresisValue_temperature_spinBox"
+              data-sb="maxHysteresisValue_temperature_spinBox"
+              onchange="sendSpinbox('maxHysteresisValue_temperature_spinBox', this.value)">
+          </div>
+          <div class="sb-row">
+            <span class="sb-lbl">Lower limit (°C)</span>
+            <input type="number" step="0.1" class="form-control sb-inp"
+              id="sb_minHysteresisValue_temperature_spinBox"
+              data-sb="minHysteresisValue_temperature_spinBox"
+              onchange="sendSpinbox('minHysteresisValue_temperature_spinBox', this.value)">
+          </div>
+        </div>
+
+        <div class="gcard">
+          <div class="gcard-title">PID Parameters</div>
+          <div class="sb-row">
+            <span class="sb-lbl">Set Point (°C)</span>
+            <input type="number" step="0.1" class="form-control sb-inp"
+              id="sb_setPointTemperature_PID_spinBox"
+              data-sb="setPointTemperature_PID_spinBox"
+              onchange="sendSpinbox('setPointTemperature_PID_spinBox', this.value)">
+          </div>
+          <div class="sb-row">
+            <span class="sb-lbl">Kp</span>
+            <input type="number" step="0.01" class="form-control sb-inp"
+              id="sb_Kp_spinBox" data-sb="Kp_spinBox"
+              onchange="sendSpinbox('Kp_spinBox', this.value)">
+          </div>
+          <div class="sb-row">
+            <span class="sb-lbl">Ki (×10⁻³)</span>
+            <input type="number" step="0.001" class="form-control sb-inp"
+              id="sb_Ki_spinBox" data-sb="Ki_spinBox"
+              onchange="sendSpinbox('Ki_spinBox', this.value)">
+          </div>
+          <div class="sb-row">
+            <span class="sb-lbl">Kd</span>
+            <input type="number" step="0.001" class="form-control sb-inp"
+              id="sb_Kd_spinBox" data-sb="Kd_spinBox"
+              onchange="sendSpinbox('Kd_spinBox', this.value)">
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: readings -->
+      <div class="col-lg-7">
+        <div class="gcard mb-3">
+          <div class="gcard-title">Sensor Readings</div>
+          <div class="row g-2">
+            <div class="col-6 col-md-4"><div class="kpi">
+              <div class="kpi-lbl">Sensor 1</div>
+              <div class="kpi-val" style="color:var(--amber)" id="temp1_t">---</div>
+            </div></div>
+            <div class="col-6 col-md-4"><div class="kpi">
+              <div class="kpi-lbl">Sensor 2</div>
+              <div class="kpi-val" style="color:var(--amber)" id="temp2_t">---</div>
+            </div></div>
+            <div class="col-6 col-md-4"><div class="kpi">
+              <div class="kpi-lbl">Sensor 3</div>
+              <div class="kpi-val" style="color:var(--amber)" id="temp3_t">---</div>
+            </div></div>
+            <div class="col-6 col-md-4"><div class="kpi">
+              <div class="kpi-lbl">Sensor 4</div>
+              <div class="kpi-val" style="color:var(--amber)" id="temp4_t">---</div>
+            </div></div>
+            <div class="col-6 col-md-4"><div class="kpi">
+              <div class="kpi-lbl">External</div>
+              <div class="kpi-val" style="color:var(--purple)" id="externalTemp_t">---</div>
+            </div></div>
+            <div class="col-6 col-md-4"><div class="kpi">
+              <div class="kpi-lbl">Control Value</div>
+              <div class="kpi-val" id="heatCtrlVal_t">---</div>
+            </div></div>
+          </div>
+        </div>
+
+        <div class="gcard mb-3">
+          <div class="gcard-title">Heater Status</div>
+          <div class="d-flex flex-wrap gap-3 align-items-center">
+            <span class="spill off" id="heaterStatus_t"><span class="dot"></span>OFF</span>
+            <div style="font-size:.81rem">PID value&nbsp;<strong style="color:var(--blue)" id="pidCurrentValue_t">---</strong></div>
+            <div style="font-size:.81rem">Duty cycle&nbsp;<strong style="color:var(--amber)" id="pidDutyCycle_t">---</strong></div>
+          </div>
+        </div>
+
+        <div class="gcard">
+          <div class="gcard-title">Duty Cycle</div>
+          <div class="dc-bar"><div class="dc-fill" id="dcFill_t" style="width:0%"></div></div>
+          <div class="d-flex justify-content-between mt-1" style="font-size:.68rem;color:var(--muted)">
+            <span>0 %</span><span>50 %</span><span>100 %</span>
+          </div>
+          <div class="mt-2">
+            <span style="font-size:.74rem;color:var(--muted)">Δ from setpoint:&nbsp;</span>
+            <span id="tempDeltaBadge" class="delta-badge ok">--</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════ WATER & HUMIDITY ═══════════════════════════════ -->
+  <div class="page" id="page-water">
+    <div class="page-title">💧 Water &amp; Humidity</div>
+
+    <div class="row g-3">
+      <!-- Left: visual + status -->
+      <div class="col-lg-4">
+        <div class="gcard mb-3">
+          <div class="gcard-title">Current Readings</div>
+          <div class="info-row"><span class="il">Humidity</span>         <span class="iv" id="humidity1_w">---</span></div>
+          <div class="info-row"><span class="il">Sensor Temperature</span><span class="iv" id="tempFromHumidity_w">---</span></div>
+          <div class="info-row"><span class="il">Water Weight</span>     <span class="iv" id="waterWeight_w">---</span></div>
+          <div class="info-row"><span class="il">Hum. Ctrl Mean</span>   <span class="iv" id="humCtrlVal_w">---</span></div>
+          <div class="info-row"><span class="il">Water Ctrl Mean</span>  <span class="iv" id="waterCtrlVal_w">---</span></div>
+        </div>
+        <div class="gcard">
+          <div class="gcard-title">Actuator Status</div>
+          <div class="d-flex flex-column gap-2">
+            <div class="d-flex align-items-center justify-content-between">
+              <span class="i18n-auto" style="color:var(--muted);font-size:.81rem">Humidifier</span>
+              <span class="spill off" id="humidifierStatus_w"><span class="dot"></span>OFF</span>
+            </div>
+            <div class="d-flex align-items-center justify-content-between">
+              <span class="i18n-auto" style="color:var(--muted);font-size:.81rem">Water Valve</span>
+              <span class="spill off" id="evalveStatus_w"><span class="dot"></span>OFF</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: controls -->
+      <div class="col-lg-8">
+        <div class="gcard mb-3">
+          <div class="gcard-title">Humidifier Mode</div>
+          <div class="d-flex gap-3 flex-wrap">
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="humMode" id="r_humOFF"  value="humidifierOFF_radioBtn">
+              <label class="form-check-label" for="r_humOFF">OFF</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="humMode" id="r_humAUTO" value="humidifierAUTO_radioBtn">
+              <label class="form-check-label" for="r_humAUTO">AUTO</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="humMode" id="r_humON"   value="humidifierON_radioBtn">
+              <label class="form-check-label" for="r_humON">Force ON</label>
+            </div>
+          </div>
+        </div>
+
+        <div class="gcard mb-3">
+          <div class="gcard-title">Humidity Hysteresis</div>
+          <!-- Il setpoint è il centro della banda: modificandolo i due limiti qui
+               sotto traslano mantenendo l'ampiezza, e viceversa. -->
+          <div class="sb-row">
+            <span class="sb-lbl">Set Point (%)</span>
+            <input type="number" step="0.5" class="form-control sb-inp"
+              id="sb_setPointHumidity_spinBox"
+              data-sb="setPointHumidity_spinBox"
+              onchange="sendSpinbox('setPointHumidity_spinBox', this.value)">
+          </div>
+          <div class="sb-row">
+            <span class="sb-lbl">Upper limit (%)</span>
+            <input type="number" step="0.1" class="form-control sb-inp"
+              id="sb_maxHysteresisValue_humidity_spinBox"
+              data-sb="maxHysteresisValue_humidity_spinBox"
+              onchange="sendSpinbox('maxHysteresisValue_humidity_spinBox', this.value)">
+          </div>
+          <div class="sb-row">
+            <span class="sb-lbl">Lower limit (%)</span>
+            <input type="number" step="0.1" class="form-control sb-inp"
+              id="sb_minHysteresisValue_humidity_spinBox"
+              data-sb="minHysteresisValue_humidity_spinBox"
+              onchange="sendSpinbox('minHysteresisValue_humidity_spinBox', this.value)">
+          </div>
+        </div>
+
+        <div class="gcard mb-3">
+          <div class="gcard-title">Water Electro-valve Mode</div>
+          <div class="d-flex gap-3 flex-wrap">
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="evalveMode" id="r_evalveOFF"  value="evalveOFF_radioBtn">
+              <label class="form-check-label" for="r_evalveOFF">OFF</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="evalveMode" id="r_evalveAUTO" value="evalveAUTO_radioBtn">
+              <label class="form-check-label" for="r_evalveAUTO">AUTO</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="radio" name="evalveMode" id="r_evalveON"   value="evalveON_radioBtn">
+              <label class="form-check-label" for="r_evalveON">Force ON</label>
+            </div>
+          </div>
+        </div>
+
+        <div class="gcard">
+          <div class="gcard-title">Water Level Hysteresis</div>
+          <div class="sb-row">
+            <span class="sb-lbl">Upper limit (kg)</span>
+            <input type="number" step="0.1" class="form-control sb-inp"
+              id="sb_maxHysteresisValue_waterLevelControl_spinBox"
+              data-sb="maxHysteresisValue_waterLevelControl_spinBox"
+              onchange="sendSpinbox('maxHysteresisValue_waterLevelControl_spinBox', this.value)">
+          </div>
+          <div class="sb-row">
+            <span class="sb-lbl">Lower limit (kg)</span>
+            <input type="number" step="0.1" class="form-control sb-inp"
+              id="sb_minHysteresisValue_waterLevelControl_spinBox"
+              data-sb="minHysteresisValue_waterLevelControl_spinBox"
+              onchange="sendSpinbox('minHysteresisValue_waterLevelControl_spinBox', this.value)">
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════ MOTOR ══════════════════════════════════════════ -->
+  <div class="page" id="page-motor">
+    <div class="page-title">⚙️ Motor Control</div>
+
+    <div class="row g-3">
+      <!-- Status -->
+      <div class="col-lg-4">
+        <div class="gcard mb-3">
+          <div class="gcard-title">Motor Status</div>
+          <div class="info-row"><span class="il">Time Since Last Turn</span> <span class="iv" id="timePassed_motor">---</span></div>
+          <div class="info-row"><span class="il">Next Turn In</span>         <span class="iv" id="timeToNextTurn_motor">---</span></div>
+          <div class="info-row"><span class="il">Total Turns</span>          <span class="iv" id="turnsCounter_motor">---</span></div>
+          <div class="info-row"><span class="il">Main State</span>           <span style="color:var(--amber);font-weight:600" id="mainState_motor">---</span></div>
+          <div class="info-row"><span class="il">Manual State</span>         <span style="color:var(--amber);font-weight:600" id="manualState_motor">---</span></div>
+          <div class="info-row"><span class="il">Rotation State</span>       <span style="color:var(--green);font-weight:600"  id="rotationState_motor">---</span></div>
+        </div>
+        <div class="gcard">
+          <div class="gcard-title">Rotation Interval</div>
+          <div class="sb-row">
+            <span class="sb-lbl">Interval (min)</span>
+            <input type="number" step="1" min="1" class="form-control sb-inp"
+              id="sb_rotation_interval_spinBox"
+              data-sb="rotation_interval_spinBox"
+              onchange="sendIntSpinbox('rotation_interval_spinBox', this.value)">
+          </div>
+        </div>
+      </div>
+
+      <!-- Visual compass -->
+      <div class="col-lg-3">
+        <div class="gcard h-100 d-flex flex-column align-items-center justify-content-center">
+          <div class="gcard-title w-100">Direction</div>
+          <svg id="motorCompassSvg" viewBox="0 0 100 100" style="width:110px;height:110px">
+            <!-- Outer ring -->
+            <circle class="svg-track" cx="50" cy="50" r="44" fill="none" stroke-width="2"/>
+            <!-- CCW arrow (thicker, blinks while rotating) — colore gestito dal JS -->
+            <g id="ccwArrowGroup" class="motor-arrow-group">
+              <path d="M 50 8 A 42 42 0 0 0 8 50" fill="none"
+                stroke-width="7" stroke-linecap="round"/>
+              <polygon id="arrowCCW" points="16,44 4,52 20,60"/>
+            </g>
+            <!-- CW arrow (thicker, blinks while rotating) -->
+            <g id="cwArrowGroup" class="motor-arrow-group">
+              <path d="M 50 8 A 42 42 0 0 1 92 50" fill="none"
+                stroke-width="7" stroke-linecap="round"/>
+              <polygon id="arrowCW" points="84,44 96,52 80,60"/>
+            </g>
+            <!-- Center circle -->
+            <circle class="svg-card-fill svg-track" cx="50" cy="50" r="17" stroke-width="1.5"/>
+            <!-- Egg icon -->
+            <text x="50" y="55" text-anchor="middle" font-size="15">🥚</text>
+            <!-- CCW label -->
+            <text class="svg-muted" x="10" y="24" font-size="7" font-weight="700">CCW</text>
+            <!-- CW label -->
+            <text class="svg-muted" x="78" y="24" font-size="7" font-weight="700">CW</text>
+            <!-- Reached indicators: fixed steady lights at 9 o'clock (CCW) and 3 o'clock (CW) -->
+            <circle id="lightCCW" class="motor-reach-light svg-track-fill" cx="4" cy="50" r="5.5"/>
+            <circle id="lightCW"  class="motor-reach-light svg-track-fill" cx="96" cy="50" r="5.5"/>
+          </svg>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.3rem" id="motorDirLabel">Idle</div>
+        </div>
+      </div>
+
+      <!-- Manual controls -->
+      <div class="col-lg-5">
+        <div class="gcard">
+          <div class="gcard-title">Manual Controls</div>
+          <div class="row g-2">
+            <div class="col-6">
+              <button class="mbtn" id="btn_move_CCW_motor_btn" onclick="sendButton('move_CCW_motor_btn')">⟲ CCW</button>
+            </div>
+            <div class="col-6">
+              <button class="mbtn" id="btn_move_CW_motor_btn"  onclick="sendButton('move_CW_motor_btn')">⟳ CW</button>
+            </div>
+            <div class="col-12">
+              <button class="mbtn" onclick="sendButton('forceEggsTurn_motor_btn')">🔄 Force Eggs Turn Now</button>
+            </div>
+            <div class="col-12">
+              <button class="mbtn" onclick="sendButton('layHorizontal_motor_btn')">↔ Lay Horizontal</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════ INCUBATION ═════════════════════════════════════ -->
+  <div class="page" id="page-days">
+    <div class="page-title">📅 Incubation Timeline</div>
+
+    <div class="row g-3">
+      <div class="col-lg-4">
+        <div class="gcard">
+          <div class="gcard-title">Settings</div>
+          <div class="sb-row">
+            <span class="sb-lbl">Start Date</span>
+            <input type="date" class="form-control" id="startDate"
+              onchange="sendDate(this.value)" style="width:150px">
+          </div>
+          <div class="sb-row">
+            <span class="sb-lbl">Duration (days)</span>
+            <input type="number" step="1" min="1" class="form-control sb-inp"
+              id="sb_days_duration_spinBox"
+              data-sb="days_duration_spinBox"
+              onchange="sendIntSpinbox('days_duration_spinBox', this.value)">
+          </div>
+        </div>
+      </div>
+
+      <div class="col-lg-8">
+        <div class="gcard">
+          <div class="gcard-title">Progress</div>
+          <div class="row g-2 mb-2">
+            <div class="col-3"><div class="kpi text-center">
+              <div class="kpi-lbl">Days In</div>
+              <div class="kpi-val" id="daysPassed">---</div>
+            </div></div>
+            <div class="col-3"><div class="kpi text-center">
+              <div class="kpi-lbl">Days Left</div>
+              <div class="kpi-val" id="daysLeft">---</div>
+            </div></div>
+            <div class="col-3"><div class="kpi text-center">
+              <div class="kpi-lbl">End Date</div>
+              <div class="kpi-val" style="font-size:.85rem" id="endDate">---</div>
+            </div></div>
+            <div class="col-3"><div class="kpi text-center">
+              <div class="kpi-lbl">Phase</div>
+              <div class="kpi-val" style="font-size:.85rem;color:var(--amber)" id="incPhase">---</div>
+            </div></div>
+          </div>
+          <div class="t-bar"><div class="t-fill" id="timelineFill" style="width:0%"></div></div>
+          <div class="d-flex justify-content-between mt-1" style="font-size:.69rem;color:var(--muted)">
+            <span class="i18n-auto">Start</span>
+            <span id="timelinePct">— % complete</span>
+            <span class="i18n-auto">Hatch</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Phase guide -->
+    <div class="gcard mt-3">
+      <div class="gcard-title">Incubation Phase Guide (chicken – 21 days)</div>
+      <div class="row g-1" style="font-size:.77rem">
+        <div class="col-md-4">
+          <div style="padding:.35rem .55rem;border-radius:6px;background:var(--blue-bg);border:1px solid var(--blue-bd)">
+            <strong style="color:var(--blue)">Setting (days 1–18)</strong><br>
+            <span style="color:var(--muted)">Temperature 37.8°C · Humidity 55% · Turn 3×/day</span>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div style="padding:.35rem .55rem;border-radius:6px;background:var(--accent-soft);border:1px solid var(--accent-bd)">
+            <strong style="color:var(--amber)">Pre-lockdown (day 18)</strong><br>
+            <span style="color:var(--muted)">Stop turning · Candle eggs · Increase humidity</span>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div style="padding:.35rem .55rem;border-radius:6px;background:var(--green-bg);border:1px solid var(--green-bd)">
+            <strong style="color:var(--green)">Lockdown (days 19–21)</strong><br>
+            <span style="color:var(--muted)">Temperature 37.5°C · Humidity 65–70% · No turning</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Incubation calendar -->
+    <div class="gcard mt-3">
+      <div class="d-flex align-items-center justify-content-between mb-2">
+        <div class="gcard-title" style="margin-bottom:0">Incubation Calendar</div>
+        <!-- Legend -->
+        <div class="d-flex gap-3" style="font-size:.7rem;color:var(--muted)">
+          <span style="display:inline-flex;align-items:center;gap:.3rem">
+            <span style="width:9px;height:9px;border-radius:50%;background:var(--amber);display:inline-block"></span>
+            Today
+          </span>
+          <span style="display:inline-flex;align-items:center;gap:.3rem">
+            <span style="width:9px;height:9px;border-radius:2px;background:var(--green);opacity:.55;display:inline-block"></span>
+            Passed
+          </span>
+          <span style="display:inline-flex;align-items:center;gap:.3rem">
+            <span style="width:9px;height:9px;border-radius:2px;background:var(--red);opacity:.5;display:inline-block"></span>
+            Remaining
+          </span>
+          <span style="display:inline-flex;align-items:center;gap:.3rem">
+            <span style="width:9px;height:9px;border-radius:2px;border:1px solid var(--blue);display:inline-block"></span>
+            Start
+          </span>
+          <span style="display:inline-flex;align-items:center;gap:.3rem">
+            <span style="width:9px;height:9px;border-radius:2px;border:1px solid var(--red);display:inline-block"></span>
+            Hatch
+          </span>
+        </div>
+      </div>
+      <div id="incubationCalendar">
+        <span class="i18n-auto" style="color:var(--muted);font-size:.8rem">Set start date and duration to see the calendar.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════ STATISTICS ═════════════════════════════════════ -->
+  <div class="page" id="page-stats">
+    <div class="page-title">📋 Statistics</div>
+
+    <div class="row g-3">
+      <div class="col-lg-6">
+        <div class="gcard mb-3">
+          <div class="gcard-title">Temperature</div>
+          <table class="stbl">
+            <thead><tr><th></th><th>Min</th><th>Mean</th><th>Max</th></tr></thead>
+            <tbody><tr>
+              <td>Temp</td>
+              <td><span class="sv" id="minTemp_stat">---</span></td>
+              <td><span class="sv" id="meanTemp_stat">---</span></td>
+              <td><span class="sv" id="maxTemp_stat">---</span></td>
+            </tr></tbody>
+          </table>
+          <div style="margin-top:.65rem">
+            <table class="stbl">
+              <thead><tr><th></th><th>Count ON</th><th>Count OFF</th><th>Time ON</th><th>Time OFF</th></tr></thead>
+              <tbody><tr>
+                <td class="i18n-auto">Heater relay</td>
+                <td><span class="sv" id="onCountT_stat">---</span></td>
+                <td><span class="sv" id="offCountT_stat">---</span></td>
+                <td><span class="sv" id="timeOnT_stat">---</span></td>
+                <td><span class="sv" id="timeOffT_stat">---</span></td>
+              </tr></tbody>
+            </table>
+          </div>
+          <div class="d-flex gap-2 mt-3 flex-wrap">
+            <button class="btn-danger-dk" onclick="sendButton('resetStatTemp_btn')">Reset</button>
+            <button class="btn-dk" onclick="requestPlot('Temperatures','mean')">📊 Mean Temp</button>
+            <button class="btn-dk" onclick="requestPlot('Temperatures','all')">📊 All Days</button>
+            <button class="btn-dk" onclick="requestPlot('Temperatures','today')">📊 Today</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-lg-6">
+        <div class="gcard mb-3">
+          <div class="gcard-title">Humidity</div>
+          <table class="stbl">
+            <thead><tr><th></th><th>Min</th><th>Mean</th><th>Max</th></tr></thead>
+            <tbody><tr>
+              <td class="i18n-auto">Humidity</td>
+              <td><span class="sv" id="minHum_stat">---</span></td>
+              <td><span class="sv" id="meanHum_stat">---</span></td>
+              <td><span class="sv" id="maxHum_stat">---</span></td>
+            </tr></tbody>
+          </table>
+          <div style="margin-top:.65rem">
+            <table class="stbl">
+              <thead><tr><th></th><th>Count ON</th><th>Count OFF</th><th>Time ON</th><th>Time OFF</th></tr></thead>
+              <tbody><tr>
+                <td class="i18n-auto">Humidifier relay</td>
+                <td><span class="sv" id="onCountH_stat">---</span></td>
+                <td><span class="sv" id="offCountH_stat">---</span></td>
+                <td><span class="sv" id="timeOnH_stat">---</span></td>
+                <td><span class="sv" id="timeOffH_stat">---</span></td>
+              </tr></tbody>
+            </table>
+          </div>
+          <div class="d-flex gap-2 mt-3 flex-wrap">
+            <button class="btn-danger-dk" onclick="sendButton('resetStatHum_btn')">Reset</button>
+            <button class="btn-dk" onclick="requestPlot('External_Temperature','all')">📊 Ext Temp</button>
+            <button class="btn-dk" onclick="requestPlot('Humidity','all')">📊 All Days</button>
+            <button class="btn-dk" onclick="requestPlot('Humidity','today')">📊 Today</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-12">
+        <div class="gcard">
+          <div class="gcard-title">Plot Options</div>
+          <div class="d-flex gap-4 flex-wrap align-items-center">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="cb_removeErrorsTemp"
+                onchange="sendCheckbox('removeErrorsTemp_checkBox', this.checked)">
+              <label class="form-check-label" for="cb_removeErrorsTemp">Remove Temperature Errors</label>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="cb_removeErrorsHum"
+                onchange="sendCheckbox('removeErrorsHum_checkBox', this.checked)">
+              <label class="form-check-label" for="cb_removeErrorsHum">Remove Humidity Errors</label>
+            </div>
+            <button class="btn-dk" onclick="requestPlot('Humidifier','all')">📊 Humidifier All Days</button>
+            <button class="btn-dk" onclick="requestPlot('Humidifier','today')">📊 Humidifier Today</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════ HISTORY CHARTS ════════════════════════════════ -->
+  <div class="page" id="page-history">
+    <div class="page-title">🗂️ Historical Charts</div>
+
+    <!-- Dataset selector -->
+    <div class="gcard mb-2" style="padding:.55rem .85rem">
+      <div class="gcard-title" style="margin-bottom:.4rem">Dataset</div>
+      <div class="d-flex gap-2 flex-wrap">
+        <button class="btn-dk hist-type-btn active" data-type="Temperatures"
+          onclick="selectHistType(this)">🌡 Temperature</button>
+        <button class="btn-dk hist-type-btn" data-type="External_Temperature"
+          onclick="selectHistType(this)">🌍 External Temp</button>
+        <button class="btn-dk hist-type-btn" data-type="Humidity"
+          onclick="selectHistType(this)">💧 Humidity</button>
+        <button class="btn-dk hist-type-btn" data-type="Heater"
+          onclick="selectHistType(this)">🔥 Heater</button>
+        <button class="btn-dk hist-type-btn" data-type="Humidifier"
+          onclick="selectHistType(this)">💦 Humidifier</button>
+        <button class="btn-dk hist-type-btn" data-type="Water_Weight"
+          onclick="selectHistType(this)">⚖ Water Weight</button>
+        <button class="btn-dk hist-type-btn" data-type="PID_Duty_Cycle"
+          onclick="selectHistType(this)">📐 PID Duty Cycle</button>
+      </div>
+    </div>
+
+    <!-- Mode + reload -->
+    <div class="gcard mb-2" style="padding:.55rem .85rem">
+      <div class="d-flex gap-2 flex-wrap align-items-center">
+        <span class="i18n-auto" style="color:var(--muted);font-size:.77rem">Mode:</span>
+        <button class="btn-dk hist-mode-btn active" data-mode="today"
+          onclick="selectHistMode(this)">Today</button>
+        <button class="btn-dk hist-mode-btn" data-mode="all"
+          onclick="selectHistMode(this)">All Days</button>
+        <button class="btn-dk hist-mode-btn" data-mode="mean"
+          onclick="selectHistMode(this)">Mean (All Days)</button>
+        <div style="flex:1"></div>
+        <button class="btn-dk" onclick="loadHistPlot()">↻ Reload</button>
+      </div>
+    </div>
+
+    <!-- Chart area -->
+    <div class="gcard mb-2" style="padding:.7rem">
+      <div id="histStatus"
+        style="color:var(--muted);font-size:.82rem;min-height:1.2rem;margin-bottom:.3rem"></div>
+      <div id="histChart" style="height:460px;"></div>
+    </div>
+
+    <!-- Zoom shortcuts -->
+    <div class="d-flex gap-2 flex-wrap align-items-center">
+      <span class="i18n-auto" style="color:var(--muted);font-size:.77rem">Zoom:</span>
+      <button class="btn-dk" onclick="histSetRange(30)">30 min</button>
+      <button class="btn-dk" onclick="histSetRange(60)">1 h</button>
+      <button class="btn-dk" onclick="histSetRange(120)">2 h</button>
+      <button class="btn-dk" onclick="histSetRange(240)">4 h</button>
+      <button class="btn-dk" onclick="histSetRange(24*60)">24 h</button>
+      <button class="btn-dk" onclick="histSetRange(0)">All</button>
+    </div>
+  </div>
+
+  <!-- ════════════════════════ LIVE CHART ═════════════════════════════════════ -->
+  <div class="page" id="page-chart">
+    <div class="page-title">📈 Live Temperature Chart</div>
+    <div class="gcard mb-2" style="padding:.6rem">
+      <div id="liveChart" style="height:460px;"></div>
+    </div>
+    <div class="d-flex gap-2 flex-wrap align-items-center">
+      <span class="i18n-auto" style="color:var(--muted);font-size:.77rem">Range:</span>
+      <button class="btn-dk" onclick="setChartRange(30)">30 min</button>
+      <button class="btn-dk" onclick="setChartRange(60)">1 h</button>
+      <button class="btn-dk" id="chartRange2h" onclick="setChartRange(120)">2 h</button>
+      <button class="btn-dk" id="chartRange4h" onclick="setChartRange(240)">4 h</button>
+      <button class="btn-dk" onclick="setChartRange(0)">All</button>
+    </div>
+  </div>
+
+  <!-- ════════════════════════ SYSTEM ═════════════════════════════════════════ -->
+  <div class="page" id="page-system">
+    <div class="page-title">🔧 System Health</div>
+
+    <div class="row g-3">
+      <div class="col-lg-6">
+        <div class="gcard mb-3">
+          <div class="gcard-title">Connectivity</div>
+          <div class="health-item">
+            <div class="health-dot ok" id="hd-broker"></div>
+            <span class="health-lbl">Web socket (browser ↔ server)</span>
+            <span class="health-val" id="hv-broker">---</span>
+          </div>
+          <div class="health-item">
+            <div class="health-dot warn" id="hd-arduino"></div>
+            <span class="health-lbl">Arduino data freshness</span>
+            <span class="health-val" id="hv-arduino">---</span>
+          </div>
+          <div class="health-item">
+            <div class="health-dot ok" id="hd-uptime"></div>
+            <span class="health-lbl">Last update received</span>
+            <span class="health-val" id="hv-uptime">---</span>
+          </div>
+        </div>
+
+        <div class="gcard">
+          <div class="gcard-title">Temperature Sensors</div>
+          <div class="health-item">
+            <div class="health-dot" id="hd-t1"></div>
+            <span class="health-lbl">Sensor TMP01</span>
+            <span class="health-val" id="hv-t1">---</span>
+          </div>
+          <div class="health-item">
+            <div class="health-dot" id="hd-t2"></div>
+            <span class="health-lbl">Sensor TMP02</span>
+            <span class="health-val" id="hv-t2">---</span>
+          </div>
+          <div class="health-item">
+            <div class="health-dot" id="hd-t3"></div>
+            <span class="health-lbl">Sensor TMP03</span>
+            <span class="health-val" id="hv-t3">---</span>
+          </div>
+          <div class="health-item">
+            <div class="health-dot" id="hd-t4"></div>
+            <span class="health-lbl">Sensor TMP04</span>
+            <span class="health-val" id="hv-t4">---</span>
+          </div>
+          <div class="health-item">
+            <div class="health-dot" id="hd-ext"></div>
+            <span class="health-lbl">External TMP (EXTT)</span>
+            <span class="health-val" id="hv-ext">---</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-lg-6">
+        <div class="gcard mb-3">
+          <div class="gcard-title">Actuators</div>
+          <div class="health-item">
+            <div class="health-dot ok" id="hd-htr"></div>
+            <span class="health-lbl">Heater (HTR01)</span>
+            <span class="health-val" id="hv-htr">---</span>
+          </div>
+          <div class="health-item">
+            <div class="health-dot ok" id="hd-hum"></div>
+            <span class="health-lbl">Humidifier (HUMER01)</span>
+            <span class="health-val" id="hv-hum">---</span>
+          </div>
+          <div class="health-item">
+            <div class="health-dot ok" id="hd-vlv"></div>
+            <span class="health-lbl">Water Valve (ELV01)</span>
+            <span class="health-val" id="hv-vlv">---</span>
+          </div>
+          <div class="health-item">
+            <div class="health-dot ok" id="hd-mtr"></div>
+            <span class="health-lbl">Stepper Motor (STPR01)</span>
+            <span class="health-val" id="hv-mtr">---</span>
+          </div>
+        </div>
+
+        <div class="gcard">
+          <div class="gcard-title">Control Loop</div>
+          <div class="health-item">
+            <div class="health-dot" id="hd-algo"></div>
+            <span class="health-lbl">Active algorithm</span>
+            <span class="health-val" id="hv-algo">---</span>
+          </div>
+          <div class="health-item">
+            <div class="health-dot ok"></div>
+            <span class="health-lbl">Heater setpoint (SP)</span>
+            <span class="health-val" id="hv-sp">---</span>
+          </div>
+          <div class="health-item">
+            <div class="health-dot ok"></div>
+            <span class="health-lbl">PID duty cycle</span>
+            <span class="health-val" id="hv-dc">---</span>
+          </div>
+          <div class="health-item">
+            <div class="health-dot" id="hd-spread"></div>
+            <span class="health-lbl">Sensor spread (ΔT)</span>
+            <span class="health-val" id="hv-spread">---</span>
+          </div>
+        </div>
+
+        <div class="gcard mt-3">
+          <div class="gcard-title">Performance</div>
+          <div class="sb-row">
+            <span class="sb-lbl">Page refresh interval (ms)</span>
+            <input type="number" step="250" min="250" max="10000" class="form-control sb-inp"
+              id="sb_webRefreshInterval_spinBox"
+              data-sb="webRefreshInterval_spinBox"
+              onchange="sendIntSpinbox('webRefreshInterval_spinBox', this.value)">
+          </div>
+          <div style="font-size:.72rem;color:var(--muted);margin-top:.5rem">
+            How often the dashboard redraws with new data. Arduino and the control
+            loop keep running at full speed regardless — raising this only reduces
+            browser CPU use, useful on the Raspberry Pi itself. Applies to every
+            connected browser and is saved on the server.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════ APPEARANCE / SETTINGS ══════════════════════════ -->
+  <div class="page" id="page-settings">
+    <div class="page-title">🎨 Appearance</div>
+
+    <div class="row g-3">
+      <div class="col-lg-7">
+        <div class="gcard mb-3">
+          <div class="gcard-title">Theme</div>
+          <div class="theme-grid" id="themeGrid">
+            <button type="button" class="theme-card" data-theme-id="dark" onclick="setTheme('dark')">
+              <div class="th-name">🌙 <span class="i18n-auto">Dark</span><span class="th-check">✓</span></div>
+              <div class="th-desc i18n-auto">Warm dark, the original look</div>
+              <div class="theme-swatch" data-preview="dark">
+                <span class="sw-bg"></span><span class="sw-card"></span>
+                <span class="sw-accent"></span><span class="sw-blue"></span>
+                <span class="sw-green"></span><span class="sw-text"></span>
+              </div>
+            </button>
+            <button type="button" class="theme-card" data-theme-id="light" onclick="setTheme('light')">
+              <div class="th-name">☀️ <span class="i18n-auto">Light</span><span class="th-check">✓</span></div>
+              <div class="th-desc i18n-auto">Bright, readable in daylight</div>
+              <div class="theme-swatch" data-preview="light">
+                <span class="sw-bg"></span><span class="sw-card"></span>
+                <span class="sw-accent"></span><span class="sw-blue"></span>
+                <span class="sw-green"></span><span class="sw-text"></span>
+              </div>
+            </button>
+            <button type="button" class="theme-card" data-theme-id="midnight" onclick="setTheme('midnight')">
+              <div class="th-name">🌌 <span class="i18n-auto">Midnight</span><span class="th-check">✓</span></div>
+              <div class="th-desc i18n-auto">Cool dark, teal accent</div>
+              <div class="theme-swatch" data-preview="midnight">
+                <span class="sw-bg"></span><span class="sw-card"></span>
+                <span class="sw-accent"></span><span class="sw-blue"></span>
+                <span class="sw-green"></span><span class="sw-text"></span>
+              </div>
+            </button>
+            <button type="button" class="theme-card" data-theme-id="meadow" onclick="setTheme('meadow')">
+              <div class="th-name">🌿 <span class="i18n-auto">Meadow</span><span class="th-check">✓</span></div>
+              <div class="th-desc i18n-auto">Light green, pine accent</div>
+              <div class="theme-swatch" data-preview="meadow">
+                <span class="sw-bg"></span><span class="sw-card"></span>
+                <span class="sw-accent"></span><span class="sw-blue"></span>
+                <span class="sw-green"></span><span class="sw-text"></span>
+              </div>
+            </button>
+          </div>
+          <!-- testo su una riga sola: applyStaticTranslations usa textContent come chiave -->
+          <div class="i18n-auto" style="font-size:.72rem;color:var(--muted);margin-top:.7rem">The choice is stored in this browser and survives a reload.</div>
+        </div>
+
+        <div class="gcard">
+          <div class="gcard-title">Language</div>
+          <div class="d-flex gap-2 flex-wrap">
+            <button type="button" class="btn-dk" onclick="setLanguage('en')">🇬🇧 English</button>
+            <button type="button" class="btn-dk" onclick="setLanguage('it')">🇮🇹 Italiano</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<!-- ── Scripts ────────────────────────────────────────────────────────────── -->
+<script src="{{ url_for('static', filename='bootstrap.bundle.min.js') }}"></script>
+<script src="{{ url_for('static', filename='socket.io.min.js') }}"></script>
+<!-- Plotly NON è qui: sono 3,6 MB da scaricare e interpretare, e sulla Dashboard
+     non serve. Lo carica ensurePlotly() alla prima apertura di una pagina con
+     grafici. Su Raspberry Pi 3 questo è il singolo risparmio più grosso. -->
+
+<script>
+'use strict';
+
+// ── Modalità leggera ──────────────────────────────────────────────────────
+// Pensata per il browser che gira sul Raspberry stesso: niente animazioni
+// continue, grafici semplificati. Su un Pi 3 a 1080p Chromium rasterizza via
+// CPU e un'animazione infinita, per quanto piccola, tiene il renderer sveglio
+// a ogni frame. Si attiva con ?lite=1 e resta memorizzata; ?lite=0 la toglie.
+const LITE = (function () {
+  var p = new URLSearchParams(location.search).get('lite');
+  if (p === '1' || p === '0') localStorage.setItem('incubatorLite', p);
+  return localStorage.getItem('incubatorLite') === '1';
+})();
+if (LITE) document.documentElement.dataset.lite = '1';
+
+// In modalità leggera il Live Chart tiene solo 1 h di storico (CHART_MAX_POINTS
+// più sotto): i pulsanti 2h/4h chiederebbero una finestra più ampia di quella
+// disponibile, lasciando metà (o più) del grafico vuoto. Si disabilitano qui;
+// la storia completa resta comunque consultabile nella pagina History.
+if (LITE) {
+  ['chartRange2h', 'chartRange4h'].forEach(id => {
+    const btn = document.getElementById(id);
+    if (btn) {
+      btn.disabled = true;
+      btn.title = 'Non disponibile in modalità leggera: il Live Chart conserva solo 1 h di storico. Usa la pagina History per intervalli più ampi.';
+    }
+  });
+}
+
+// Caricamento di Plotly su richiesta: la prima chiamata inietta lo script, le
+// successive riusano la stessa promise.
+let _plotlyPromise = null;
+function ensurePlotly() {
+  if (window.Plotly) return Promise.resolve(window.Plotly);
+  if (_plotlyPromise) return _plotlyPromise;
+  _plotlyPromise = new Promise(function (resolve, reject) {
+    var s = document.createElement('script');
+    s.src = "{{ url_for('static', filename='plotly-2.32.0.min.js') }}";
+    s.onload  = function () { resolve(window.Plotly); };
+    s.onerror = function () { _plotlyPromise = null; reject(new Error('Plotly non caricato')); };
+    document.head.appendChild(s);
+  });
+  return _plotlyPromise;
+}
+
+// ── i18n (EN/IT) ─────────────────────────────────────────────────────────
+const I18N_IT = {
+  // Sidebar
+  'Incubator': 'Incubatrice', 'Control Panel': 'Pannello di Controllo',
+  'Monitor': 'Monitoraggio', 'Control': 'Controllo', 'Setup': 'Configurazione',
+  'Appearance': 'Aspetto',
+  'Dashboard': 'Pannello', 'Live Chart': 'Grafico Live', 'History': 'Cronologia',
+  'Statistics': 'Statistiche', 'Temperature': 'Temperatura',
+  'Water & Humidity': 'Acqua e Umidità', 'Motor': 'Motore', 'Incubation': 'Incubazione',
+  'System': 'Sistema', 'Connected': 'Connesso', 'Disconnected': 'Disconnesso',
+  // Page titles
+  '📊 Dashboard': '📊 Pannello',
+  '🌡️ Temperature Control': '🌡️ Controllo Temperatura',
+  '💧 Water & Humidity': '💧 Acqua e Umidità',
+  '⚙️ Motor Control': '⚙️ Controllo Motore',
+  '📅 Incubation Timeline': '📅 Cronologia Incubazione',
+  '📋 Statistics': '📋 Statistiche',
+  '🗂️ Historical Charts': '🗂️ Grafici Storici',
+  '📈 Live Temperature Chart': '📈 Grafico Temperatura Live',
+  '🔧 System Health': '🔧 Stato del Sistema',
+  '🎨 Appearance': '🎨 Aspetto',
+  // Card titles
+  'Internal Temperature (avg)': 'Temperatura Interna (media)',
+  'Humidity & Water': 'Umidità e Acqua',
+  'Water Reservoir': 'Serbatoio Acqua',
+  'Incubation Progress': 'Avanzamento Incubazione',
+  'Heater Mode': 'Modalità Riscaldatore',
+  'Control Algorithm': 'Algoritmo di Controllo',
+  'Hysteresis Limits': 'Limiti Isteresi',
+  'PID Parameters': 'Parametri PID',
+  'Sensor Readings': 'Letture Sensori',
+  'Heater Status': 'Stato Riscaldatore',
+  'Duty Cycle': 'Ciclo di Lavoro',
+  'Current Readings': 'Letture Attuali',
+  'Actuator Status': 'Stato Attuatori',
+  'Humidifier Mode': 'Modalità Umidificatore',
+  'Humidity Hysteresis': 'Isteresi Umidità',
+  'Water Electro-valve Mode': 'Modalità Elettrovalvola Acqua',
+  'Water Level Hysteresis': 'Isteresi Livello Acqua',
+  'Motor Status': 'Stato Motore',
+  'Rotation Interval': 'Intervallo Rotazione',
+  'Manual Controls': 'Controlli Manuali',
+  'Settings': 'Impostazioni',
+  'Progress': 'Avanzamento',
+  'Incubation Phase Guide (chicken – 21 days)': 'Guida alle Fasi di Incubazione (pollo – 21 giorni)',
+  'Incubation Calendar': 'Calendario Incubazione',
+  'Humidity': 'Umidità',
+  'Plot Options': 'Opzioni Grafico',
+  'Connectivity': 'Connettività',
+  'Temperature Sensors': 'Sensori di Temperatura',
+  'Actuators': 'Attuatori',
+  'Control Loop': 'Ciclo di Controllo',
+  'Theme': 'Tema', 'Language': 'Lingua',
+  // Theme picker
+  'Dark': 'Scuro', 'Light': 'Chiaro', 'Midnight': 'Notte', 'Meadow': 'Prato',
+  'Warm dark, the original look': 'Scuro caldo, l’aspetto originale',
+  'Bright, readable in daylight': 'Chiaro, leggibile alla luce del giorno',
+  'Cool dark, teal accent': 'Scuro freddo, accento turchese',
+  'Light green, pine accent': 'Verde chiaro, accento pino',
+  'The choice is stored in this browser and survives a reload.':
+    'La scelta resta salvata in questo browser anche dopo un ricaricamento.',
+  // KPI labels
+  'Hum Sensor T': 'Temp. Sensore Umidità', 'Hum. Ctrl': 'Ctrl Umidità',
+  'Water Weight': 'Peso Acqua', 'Valve': 'Valvola', 'Heater': 'Riscaldatore',
+  'PID Process Value': 'Valore di Processo PID',
+  'Heat Control Value': 'Valore Controllo Calore',
+  'Sensor Spread (ΔT)': 'Escursione Sensori (ΔT)',
+  'Days Passed / Left': 'Giorni Trascorsi / Rimanenti',
+  'Sensor 1': 'Sensore 1', 'Sensor 2': 'Sensore 2', 'Sensor 3': 'Sensore 3', 'Sensor 4': 'Sensore 4',
+  'External': 'Esterno', 'Control Value': 'Valore di Controllo',
+  'Days In': 'Giorni Trascorsi', 'Days Left': 'Giorni Rimanenti',
+  'End Date': 'Data Fine', 'Phase': 'Fase',
+  // Radio / checkbox labels
+  'Force ON': 'Forza ON', 'Hysteresis': 'Isteresi',
+  'Remove Temperature Errors': 'Rimuovi Errori Temperatura',
+  'Remove Humidity Errors': 'Rimuovi Errori Umidità',
+  // Setting labels
+  'Upper limit (°C)': 'Limite superiore (°C)', 'Lower limit (°C)': 'Limite inferiore (°C)',
+  'Set Point (°C)': 'Setpoint (°C)', 'Set Point (%)': 'Setpoint (%)',
+  'Set Point': 'Setpoint', 'Max Level': 'Livello Max', 'Min Level': 'Livello Min',
+  'Fan Speed': 'Velocità Ventole', 'Speed': 'Velocità',
+  'Upper limit (%)': 'Limite superiore (%)', 'Lower limit (%)': 'Limite inferiore (%)',
+  'Upper limit (kg)': 'Limite superiore (kg)', 'Lower limit (kg)': 'Limite inferiore (kg)',
+  'Interval (min)': 'Intervallo (min)',
+  'Start Date': 'Data Inizio', 'Duration (days)': 'Durata (giorni)',
+  // Info-row labels
+  'Sensor Temperature': 'Temperatura Sensore', 'Hum. Ctrl Mean': 'Media Ctrl Umidità',
+  'Water Ctrl Mean': 'Media Ctrl Acqua', 'Time Since Last Turn': "Tempo dall'Ultima Rotazione",
+  'Next Turn In': 'Prossima Rotazione Tra', 'Total Turns': 'Rotazioni Totali',
+  'Main State': 'Stato Principale', 'Manual State': 'Stato Manuale', 'Rotation State': 'Stato Rotazione',
+  // Health page
+  'Web socket (browser ↔ server)': 'Web socket (browser ↔ server)',
+  'Arduino data freshness': 'Aggiornamento dati Arduino',
+  'Last update received': 'Ultimo aggiornamento ricevuto',
+  'Sensor TMP01': 'Sensore TMP01', 'Sensor TMP02': 'Sensore TMP02',
+  'Sensor TMP03': 'Sensore TMP03', 'Sensor TMP04': 'Sensore TMP04',
+  'External TMP (EXTT)': 'TMP Esterna (EXTT)',
+  'Heater (HTR01)': 'Riscaldatore (HTR01)', 'Humidifier (HUMER01)': 'Umidificatore (HUMER01)',
+  'Water Valve (ELV01)': 'Valvola Acqua (ELV01)', 'Stepper Motor (STPR01)': 'Motore Passo-Passo (STPR01)',
+  'Active algorithm': 'Algoritmo attivo', 'Heater setpoint (SP)': 'Setpoint Riscaldatore (SP)',
+  'PID duty cycle': 'Duty cycle PID', 'Sensor spread (ΔT)': 'Escursione sensori (ΔT)',
+  // Table headers
+  'Min': 'Min', 'Mean': 'Media', 'Max': 'Max',
+  'Count ON': 'Conteggio ON', 'Count OFF': 'Conteggio OFF',
+  'Time ON': 'Tempo ON', 'Time OFF': 'Tempo OFF',
+  // Buttons
+  'Reset': 'Reimposta',
+  '📊 Mean Temp': '📊 Temp. Media', '📊 All Days': '📊 Tutti i Giorni', '📊 Today': '📊 Oggi',
+  '📊 Ext Temp': '📊 Temp. Esterna',
+  '📊 Humidifier All Days': '📊 Umidificatore Tutti i Giorni', '📊 Humidifier Today': '📊 Umidificatore Oggi',
+  '🌡 Temperature': '🌡 Temperatura', '🌍 External Temp': '🌍 Temp. Esterna',
+  '💧 Humidity': '💧 Umidità', '🔥 Heater': '🔥 Riscaldatore', '💦 Humidifier': '💦 Umidificatore',
+  '⚖ Water Weight': '⚖ Peso Acqua', '📐 PID Duty Cycle': '📐 Duty Cycle PID',
+  'Today': 'Oggi', 'All Days': 'Tutti i Giorni', 'Mean (All Days)': 'Media (Tutti i Giorni)',
+  '↻ Reload': '↻ Ricarica', 'All': 'Tutti',
+  '🔄 Force Eggs Turn Now': '🔄 Forza Rotazione Uova Ora', '↔ Lay Horizontal': '↔ Posiziona Orizzontale',
+  // Stats table row labels (unique keys to avoid conflicts with other usages)
+  'Heater relay': 'relè riscaldatore',
+  'Humidifier relay': 'relè umidificatore',
+  // SVG gauge sub-labels
+  '°C  internal avg': '°C  media',
+  'relative humidity': 'umidità relativa',
+  'recirculation fans': 'ventole ricircolo',
+  // Bare labels (i18n-auto)
+  'Heater duty cycle': 'Duty cycle riscaldatore',
+  'Water Valve': 'Valvola Acqua', 'Start': 'Inizio', 'Hatch': 'Schiusa',
+  'Set start date and duration to see the calendar.': 'Imposta data di inizio e durata per vedere il calendario.',
+  'Mode:': 'Modalità:', 'Zoom:': 'Zoom:', 'Range:': 'Intervallo:',
+  // Dynamic status text (via setPill / setHealthItem / setText)
+  'Heating': 'Riscaldamento', 'Humidifying': 'Umidificazione', 'Filling': 'Riempimento',
+  'ON – Heating': 'ON – Riscaldamento', 'ON – Humidifying': 'ON – Umidificazione',
+  'ON – Filling': 'ON – Riempimento', 'Fresh': 'Aggiornato',
+  'Idle': 'Inattivo', 'Rotating CCW': 'Rotazione CCW', 'Rotating CW': 'Rotazione CW',
+  'CCW reached': 'CCW raggiunto', 'CW reached': 'CW raggiunto',
+  'Setting': 'Preparazione', 'Pre-lockdown': 'Pre-blocco', 'Lockdown': 'Blocco',
+  // Calendar month/day names
+  'January': 'Gennaio', 'February': 'Febbraio', 'March': 'Marzo', 'April': 'Aprile',
+  'May': 'Maggio', 'June': 'Giugno', 'July': 'Luglio', 'August': 'Agosto',
+  'September': 'Settembre', 'October': 'Ottobre', 'November': 'Novembre', 'December': 'Dicembre',
+  'Mo': 'Lu', 'Tu': 'Ma', 'We': 'Me', 'Th': 'Gi', 'Fr': 'Ve', 'Sa': 'Sa', 'Su': 'Do',
+};
+
+let currentLang = localStorage.getItem('incubatorLang') || 'en';
+
+// Translates a canonical English source string to the current language.
+// Anything not found in the dictionary (numbers, raw sensor values, etc.)
+// passes through unchanged, so it's always safe to call.
+function tr(txt) {
+  if (currentLang === 'it' && Object.prototype.hasOwnProperty.call(I18N_IT, txt)) {
+    return I18N_IT[txt];
+  }
+  return txt;
+}
+
+// Static markup translation: elements matching STATIC_I18N_SELECTORS keep their
+// original English text cached in data-i18n-src the first time this runs, so
+// switching languages back and forth is always lossless.
+const STATIC_I18N_SELECTORS = [
+  '.page-title', '.gcard-title', '.kpi-lbl', '.form-check-label', '.sb-lbl', '.sp-lbl',
+  '.il', '.health-lbl', 'th', '.btn-dk', '.btn-danger-dk', '.mbtn',
+  '.sb-name', '.sb-sub', '.sb-section', '.nav-lbl', '.i18n-auto',
+].join(', ');
+
+function applyStaticTranslations() {
+  document.querySelectorAll(STATIC_I18N_SELECTORS).forEach(el => {
+    if (el.dataset.i18nSrc === undefined) el.dataset.i18nSrc = el.textContent;
+    el.textContent = tr(el.dataset.i18nSrc);
+  });
+  // SVG <text> elements are not reachable by the CSS selector above
+  ['svgTempSubLabel', 'svgHumSubLabel', 'svgFanSubLabel'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (el.dataset.i18nSrc === undefined) el.dataset.i18nSrc = el.textContent;
+    el.textContent = tr(el.dataset.i18nSrc);
+  });
+}
+
+function setLanguage(lang) {
+  currentLang = lang;
+  localStorage.setItem('incubatorLang', lang);
+  document.documentElement.lang = lang;
+  document.getElementById('flag_en').classList.toggle('active', lang === 'en');
+  document.getElementById('flag_it').classList.toggle('active', lang === 'it');
+  applyStaticTranslations();
+  // Give immediate feedback on the connection label too (next socket event
+  // will also keep it correct going forward, this just avoids a stale flash).
+  const connLbl = document.getElementById('conn-lbl');
+  if (connLbl) connLbl.textContent = tr(socket && socket.connected ? 'Connected' : 'Disconnected');
+  renderIncubationCalendar();
+}
+
+// ── Temi ──────────────────────────────────────────────────────────────────
+// Tutti i colori vivono nelle variabili CSS di :root / html[data-theme=…].
+// Qui si cambia solo l'attributo e si ridisegna ciò che il CSS non raggiunge:
+// i colori scritti dal JS (gauge, bussola) e i grafici Plotly, che sono canvas.
+const THEMES = ['dark', 'light', 'midnight', 'meadow'];
+let currentTheme = localStorage.getItem('incubatorTheme');
+if (!THEMES.includes(currentTheme)) currentTheme = 'dark';
+
+// Legge una variabile del tema attivo, con cache.
+// getComputedStyle() dopo una scrittura nel DOM obbliga il browser a ricalcolare
+// stile e layout *subito*, in mezzo all'aggiornamento (forced synchronous
+// layout): alternando le due cose — ed è quello che fanno il gauge e la bussola
+// a ogni dato in arrivo — si paga più volte al secondo il layout dell'intera
+// pagina. I valori cambiano solo al cambio tema, quindi si leggono una volta e
+// la cache viene svuotata in setTheme().
+let _cssVarCache = Object.create(null);
+function cssVar(name) {
+  let v = _cssVarCache[name];
+  if (v === undefined) {
+    v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    _cssVarCache[name] = v;
+  }
+  return v;
+}
+
+function setTheme(theme) {
+  if (!THEMES.includes(theme)) theme = 'dark';
+  currentTheme = theme;
+  localStorage.setItem('incubatorTheme', theme);
+  document.documentElement.dataset.theme = theme;
+  _cssVarCache = Object.create(null);   // i colori del tema sono cambiati
+  document.querySelectorAll('.theme-card').forEach(c => {
+    c.classList.toggle('active', c.dataset.themeId === theme);
+  });
+  repaintThemedGraphics();
+}
+
+// Ridisegna tutto ciò che porta colori decisi a runtime: senza questo il gauge
+// e i grafici resterebbero con la tinta del tema precedente fino al prossimo
+// aggiornamento dei dati.
+function repaintThemedGraphics() {
+  updateTempGauge(_lastAvg);
+  renderTempDelta();
+  updateMotorCompass(_lastRotState);
+  // Plotly può non essere ancora caricato: si tocca solo se un grafico esiste.
+  if (chartInited && window.Plotly) {
+    Plotly.relayout('liveChart', chartLayout());
+    Plotly.restyle('liveChart', { 'line.color': traceColors() });
+  }
+  if (histInited) loadHistPlot();
+}
+
+// ── System clock ──────────────────────────────────────────────────────────
+setInterval(() => {
+  const n = new Date();
+  const pad = v => String(v).padStart(2, '0');
+  document.getElementById('sys-time').textContent =
+    `${pad(n.getHours())}:${pad(n.getMinutes())}:${pad(n.getSeconds())}`;
+}, 1000);
+
+// ── Sidebar navigation ────────────────────────────────────────────────────
+document.getElementById('sideNav').querySelectorAll('li').forEach(li => {
+  li.addEventListener('click', () => {
+    document.querySelectorAll('#sideNav li').forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('.page').forEach(x => x.classList.remove('active'));
+    li.classList.add('active');
+    document.getElementById('page-' + li.dataset.pg).classList.add('active');
+    // Mentre era nascosta la pagina non veniva aggiornata: si riempie ora con
+    // l'ultimo stato ricevuto, prima che l'utente la veda.
+    _activePage = li.dataset.pg;
+    refreshActivePage();
+    if (li.dataset.pg === 'chart')   openLiveChart();
+    if (li.dataset.pg === 'history') loadHistPlot();
+    if (window.innerWidth <= 768)
+      document.getElementById('sidebar').classList.remove('open');
+  });
+});
+
+// ── Socket.IO ─────────────────────────────────────────────────────────────
+const socket = io();
+
+socket.on('connect', () => {
+  document.getElementById('conn-dot').classList.add('ok');
+  document.getElementById('conn-lbl').textContent = tr('Connected');
+  setHealthItem('hd-broker', 'hv-broker', 'ok', 'Connected');
+});
+socket.on('disconnect', () => {
+  document.getElementById('conn-dot').classList.remove('ok');
+  document.getElementById('conn-lbl').textContent = tr('Disconnected');
+  setHealthItem('hd-broker', 'hv-broker', 'err', 'Disconnected');
+});
+
+socket.on('full_state', state => {
+  if (state.view)            applyView(state.view);
+  if (state.statistics)      applyStatistics(state.statistics);
+  if (state.days_statistics) applyDaysStats(state.days_statistics);
+  if (state.motor)           applyMotor(state.motor);
+  if (state.spinboxes)
+    Object.entries(state.spinboxes).forEach(([n, v]) => applySpinbox(n, v));
+  if (state.dates)
+    Object.entries(state.dates).forEach(([n, v]) => applyDate(n, v));
+  if (state.radio_buttons)
+    Object.entries(state.radio_buttons).forEach(([n, v]) => applyRadio(n, v));
+});
+
+// ── Refresh rate del rendering ───────────────────────────────────────────
+// Il frame dall'Arduino arriva ~1 volta al secondo; in un'incubatrice la
+// temperatura non cambia in 1-2 secondi, quindi si può ridisegnare la pagina
+// meno spesso senza perdere informazione utile. L'intervallo (ms) si imposta
+// in System → Performance e vale per tutti i browser collegati perché è
+// salvato server-side in parameters.json (WEB_REFRESH_INTERVAL_MS), a
+// differenza di tema/lingua che restano in localStorage.
+let _refreshIntervalMs = 1000;
+
+// Throttle con trailing call: l'ultimo dato arrivato viene comunque applicato,
+// al più tardi dopo _refreshIntervalMs dal rendering precedente.
+function throttled(fn) {
+  let lastRun = 0, pending = null, timer = null;
+  return function (data) {
+    pending = data;
+    const elapsed = Date.now() - lastRun;
+    if (elapsed >= _refreshIntervalMs) {
+      lastRun = Date.now();
+      fn(pending);
+      pending = null;
+    } else if (!timer) {
+      timer = setTimeout(() => {
+        timer = null;
+        lastRun = Date.now();
+        fn(pending);
+        pending = null;
+      }, _refreshIntervalMs - elapsed);
+    }
+  };
+}
+
+socket.on('update_view',            throttled(applyView));
+socket.on('update_statistics',      throttled(applyStatistics));
+socket.on('update_days_statistics', throttled(applyDaysStats));
+socket.on('update_motor',           throttled(applyMotor));
+socket.on('update_spinbox', d => applySpinbox(d.name, d.value));
+socket.on('update_date',    d => applyDate(d.name, d.date));
+socket.on('update_radio',   d => applyRadio(d.name, d.checked));
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+// ── Pagina attiva ─────────────────────────────────────────────────────────
+// Un dato in arrivo riguarda in genere una sola pagina, ma le altre esistono
+// comunque nel DOM: scriverci dentro è lavoro buttato via, perché nessuno le
+// vede (`.page { display: none }`). Si salta la scrittura e, quando si apre una
+// pagina, le si riapplica l'ultimo stato ricevuto (vedi refreshActivePage()).
+let _activePage = 'dashboard';
+
+// A quale pagina appartiene un elemento. closest() costa, quindi il risultato
+// resta attaccato all'elemento: la struttura non cambia mai.
+function pageOf(el) {
+  if (el.__pg === undefined) {
+    const p = el.closest ? el.closest('.page') : null;
+    el.__pg = p ? p.id.replace(/^page-/, '') : null;
+  }
+  return el.__pg;
+}
+
+// null = fuori dalle pagine (barra in alto, sidebar): sempre aggiornato.
+function elVisible(el) {
+  const p = pageOf(el);
+  return p === null || p === _activePage;
+}
+
+// Scritture destinate a pagine non visibili: si mettono da parte e si applicano
+// all'apertura della pagina. Tenere il valore qui invece di scartarlo evita di
+// dover ricordare, per ogni cosa che si aggiorna, da quale messaggio arrivava.
+const _pending = new Set();
+
+function _defer(el, key, value) {
+  el[key] = value;
+  _pending.add(el);
+}
+
+function flushPending() {
+  if (!_pending.size) return;
+  const done = [];
+  _pending.forEach(el => {
+    if (!elVisible(el)) return;
+    if (el.__pText !== undefined) {
+      if (el.textContent !== el.__pText) el.textContent = el.__pText;
+      el.__pText = undefined;
+    }
+    if (el.__pClass !== undefined) {
+      if (el.className !== el.__pClass) el.className = el.__pClass;
+      el.__pClass = undefined;
+    }
+    if (el.__pAttr) {
+      for (const k in el.__pAttr) {
+        if (el.getAttribute(k) !== el.__pAttr[k]) el.setAttribute(k, el.__pAttr[k]);
+      }
+      el.__pAttr = null;
+    }
+    if (el.__pStyle) {
+      for (const k in el.__pStyle) setStyleOnce(el, k, el.__pStyle[k]);
+      el.__pStyle = null;
+    }
+    if (el.__pPill) {
+      const a = el.__pPill;
+      el.__pPill = null;
+      setPill(el.id, a[0], a[1], a[2], a[3]);
+    }
+    done.push(el);
+  });
+  done.forEach(el => _pending.delete(el));
+}
+
+// Scrivere nel DOM un valore identico a quello già presente non è gratis:
+// Chromium marca comunque il nodo come "sporco" e rifà stile, layout e paint di
+// quella zona. Di frame in frame la gran parte dei campi non cambia (stati,
+// contatori, etichette): il confronto evita il lavoro inutile. Su un Pi 3, che
+// rasterizza in software a 1080p, è la differenza fra ridisegnare due numeri e
+// ridisegnare mezza pagina a ogni dato che arriva.
+function setText(id, txt) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const next = (txt !== undefined && txt !== null) ? tr(txt) : '---';
+  if (!elVisible(el)) { _defer(el, '__pText', next); return; }
+  if (el.textContent !== next) el.textContent = next;
+}
+
+// Stessa logica di setText per attributi e stili inline dei disegni SVG.
+// Per lo stile non si può confrontare con el.style.<prop>: il browser
+// normalizza i colori (si scrive '#ffcc00', si rilegge 'rgb(255, 204, 0)') e il
+// confronto fallirebbe sempre. Si ricorda quindi l'ultimo valore applicato.
+function setAttr(el, name, value) {
+  if (!el) return;
+  if (!elVisible(el)) {
+    if (!el.__pAttr) el.__pAttr = {};
+    el.__pAttr[name] = value;
+    _pending.add(el);
+    return;
+  }
+  if (el.getAttribute(name) !== value) el.setAttribute(name, value);
+}
+
+function setStyleOnce(el, prop, value) {
+  if (!el) return;
+  if (!elVisible(el)) {
+    if (!el.__pStyle) el.__pStyle = {};
+    el.__pStyle[prop] = value;
+    _pending.add(el);
+    return;
+  }
+  const key = '__s_' + prop;
+  if (el[key] === value) return;
+  el[key] = value;
+  el.style[prop] = value;
+}
+
+function fmt(v, dec = 1) {
+  return (typeof v === 'number' && isFinite(v)) ? v.toFixed(dec) : null;
+}
+
+// I badge di stato (riscaldatore, umidificatore, valvola…) vengono riscritti a
+// ogni dato in arrivo, ma cambiano di rado. Prima ogni chiamata rifaceva
+// l'innerHTML: il browser buttava via il pallino e il testo e li ricostruiva da
+// capo, con tanto di parsing dell'HTML. Ora la struttura si crea una volta e si
+// tocca solo ciò che cambia davvero.
+function setPill(id, isOn, onTxt, offTxt, onClass) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (!elVisible(el)) { _defer(el, '__pPill', [isOn, onTxt, offTxt, onClass]); return; }
+
+  let label = el.__pillLabel;
+  if (!label) {
+    el.textContent = '';
+    const dot = document.createElement('span');
+    dot.className = 'dot';
+    el.appendChild(dot);
+    label = document.createTextNode('');
+    el.appendChild(label);
+    el.__pillLabel = label;
+  }
+
+  const txt = tr(isOn ? onTxt : offTxt);
+  if (label.nodeValue !== txt) label.nodeValue = txt;
+
+  const cls = 'spill ' + (isOn ? ('on' + (onClass ? ' ' + onClass : '')) : 'off');
+  if (el.className !== cls) el.className = cls;
+}
+
+function setHealthItem(dotId, valId, status, text) {
+  const dot = document.getElementById(dotId);
+  const val = document.getElementById(valId);
+  const cls = 'health-dot ' + status;
+  if (dot) {
+    if (!elVisible(dot)) _defer(dot, '__pClass', cls);       // vedi setText
+    else if (dot.className !== cls) dot.className = cls;
+  }
+  if (val) {
+    const next = tr(text);
+    if (!elVisible(val)) _defer(val, '__pText', next);
+    else if (val.textContent !== next) val.textContent = next;
+  }
+}
+
+// ── Gauge: arc gauge using stroke-dasharray on a circle ───────────────────
+// 270° arc: circumference for r=62 → 2π*62 = 389.6; 270/360 * 389.6 = 292.2; rest = 97.4
+const TEMP_CIRC = 389.6, TEMP_ARC = 292.2;
+// Il gauge dell'umidità ha la stessa geometria di quello della temperatura
+const HUM_CIRC  = TEMP_CIRC, HUM_ARC = TEMP_ARC;
+
+function tempGaugeColor(t) {
+  if (t === null) return cssVar('--border');
+  if (t < 36)    return cssVar('--blue');    // cold
+  if (t < 37.2)  return cssVar('--amber');   // warming
+  if (t <= 38.2) return cssVar('--green');   // nominal
+  if (t <= 39.5) return cssVar('--amber');   // warm
+  return cssVar('--red');                     // hot
+}
+
+// Scala del gauge temperatura, condivisa fra arco e tacca di setpoint
+const TEMP_GAUGE_MIN = 30, TEMP_GAUGE_MAX = 45;
+
+function updateTempGauge(avg) {
+  const arc = document.getElementById('tempGaugeArc');
+  const lbl = document.getElementById('gaugeTempVal');
+  if (!arc || !lbl) return;
+  _lastAvg = avg;
+  const pct = avg !== null
+    ? Math.max(0, Math.min(1, (avg - TEMP_GAUGE_MIN) / (TEMP_GAUGE_MAX - TEMP_GAUGE_MIN)))
+    : 0;
+  const dash = pct * TEMP_ARC;
+  setAttr(arc, 'stroke-dasharray', `${dash.toFixed(1)} ${(TEMP_CIRC - dash).toFixed(1)}`);
+  // .style e non setAttribute: così vince sulle classi del tema, che colorano
+  // solo la parte statica del disegno.
+  setStyleOnce(arc, 'stroke', tempGaugeColor(avg));
+  const lblTxt = avg !== null ? avg.toFixed(1) : '--.-';
+  if (lbl.textContent !== lblTxt) lbl.textContent = lblTxt;
+  setStyleOnce(lbl, 'fill', avg !== null ? tempGaugeColor(avg) : cssVar('--text'));
+}
+
+// Δ rispetto al setpoint sul gauge della dashboard: riferito alla media dei
+// sensori. Funzione a parte perché serve anche al ridisegno dopo un cambio tema.
+function renderTempDelta() {
+  const deltaEl = document.getElementById('gaugeDelta');
+  if (!deltaEl) return;
+  if (_setpoint !== null && _lastAvg !== null) {
+    const dg = _lastAvg - _setpoint;
+    const txt = 'Δ SP: ' + (dg >= 0 ? '+' : '') + dg.toFixed(2) + ' °C';
+    if (deltaEl.textContent !== txt) deltaEl.textContent = txt;
+    setStyleOnce(deltaEl, 'fill', tempGaugeColor(_lastAvg));
+  } else {
+    if (deltaEl.textContent !== 'Δ SP: ---') deltaEl.textContent = 'Δ SP: ---';
+    setStyleOnce(deltaEl, 'fill', cssVar('--muted'));
+  }
+}
+
+// Tacca radiale del setpoint sull'arco del gauge.
+// L'arco parte da 135° (in basso a sinistra) e copre 270° in senso orario,
+// esattamente come il <circle> ruotato con transform="rotate(135, 90, 90)".
+function updateTempGaugeSetpoint(sp) {
+  const tick  = document.getElementById('gaugeSpTick');
+  const title = document.getElementById('gaugeSpTickTitle');
+
+  // Riquadro numerico accanto ai sensori: legge lo stesso valore della tacca
+  const tileVal = document.getElementById('setpointValue');
+  const tile    = document.getElementById('setpointTile');
+  const spKnown = (sp !== null && sp !== undefined && isFinite(sp));
+  if (tileVal) tileVal.textContent = spKnown ? sp.toFixed(1) : '---';
+  if (tile) {
+    tile.title = spKnown
+      ? 'Setpoint PID ' + sp.toFixed(1) + ' °C — riferimento, non una misura'
+      : 'Setpoint non ancora noto';
+  }
+
+  if (!tick) return;
+
+  if (!spKnown) {
+    tick.setAttribute('opacity', '0');
+    if (title) title.textContent = '';
+    return;
+  }
+
+  const clamped = Math.max(TEMP_GAUGE_MIN, Math.min(TEMP_GAUGE_MAX, sp));
+  const pct = (clamped - TEMP_GAUGE_MIN) / (TEMP_GAUGE_MAX - TEMP_GAUGE_MIN);
+  const rad = (135 + pct * 270) * Math.PI / 180;
+  const cx = 90, cy = 90, rIn = 54, rOut = 71;
+
+  tick.setAttribute('x1', (cx + rIn  * Math.cos(rad)).toFixed(2));
+  tick.setAttribute('y1', (cy + rIn  * Math.sin(rad)).toFixed(2));
+  tick.setAttribute('x2', (cx + rOut * Math.cos(rad)).toFixed(2));
+  tick.setAttribute('y2', (cy + rOut * Math.sin(rad)).toFixed(2));
+  // fuori scala → tacca smorzata, per non far credere che il setpoint sia al limite
+  tick.setAttribute('opacity', (sp === clamped) ? '0.95' : '0.35');
+  if (title) title.textContent = 'Setpoint ' + sp.toFixed(1) + ' °C';
+}
+
+function updateHumGauge(hum) {
+  const arc = document.getElementById('humGaugeArc');
+  const lbl = document.getElementById('gaugeHumVal');
+  if (!arc || !lbl) return;
+  const pct = hum !== null ? Math.max(0, Math.min(1, hum / 100)) : 0;
+  const dash = pct * HUM_ARC;
+  setAttr(arc, 'stroke-dasharray', `${dash.toFixed(1)} ${(HUM_CIRC - dash).toFixed(1)}`);
+  // Arco di lunghezza zero: il linecap tondo lo disegnerebbe come un pallino
+  // all'inizio della scala. Stringa vuota → torna al colore della classe, che
+  // segue il tema da sola (qui non serve il repaint al cambio tema).
+  setStyleOnce(arc, 'stroke', dash > 0 ? '' : 'transparent');
+  const humTxt = hum !== null ? hum.toFixed(0) + '%' : '--%';
+  if (lbl.textContent !== humTxt) lbl.textContent = humTxt;
+  _lastHum = hum;
+  renderHumDelta();
+}
+
+// Δ rispetto al setpoint, come sul gauge temperatura. Vive in una funzione a
+// parte perché va ricalcolato sia quando cambia la misura sia quando cambia il
+// setpoint, e i due eventi arrivano separati.
+function renderHumDelta() {
+  const dEl = document.getElementById('gaugeHumDelta');
+  if (!dEl) return;
+  const txt = (_lastHum !== null && _humSetpoint !== null)
+    ? 'Δ SP: ' + ((_lastHum - _humSetpoint) >= 0 ? '+' : '') + (_lastHum - _humSetpoint).toFixed(1) + ' %'
+    : 'Δ SP: ---';
+  if (dEl.textContent !== txt) dEl.textContent = txt;
+}
+
+// Gauge ventole: stessa geometria e stesso trucco anti-pallino di quello
+// dell'umidità (arco trasparente a valore zero). Nessun setpoint/misura da
+// confrontare - è il comando diretto che va anche ad Arduino come FAN01 - quindi
+// niente tacca né Δ.
+const FAN_CIRC = HUM_CIRC, FAN_ARC = HUM_ARC;
+
+function updateFanGauge(pct) {
+  const arc = document.getElementById('fanGaugeArc');
+  const lbl = document.getElementById('gaugeFanVal');
+  if (!arc || !lbl) return;
+  const clamped = (pct !== null && isFinite(pct)) ? Math.max(0, Math.min(100, pct)) : null;
+  const frac = clamped !== null ? clamped / 100 : 0;
+  const dash = frac * FAN_ARC;
+  setAttr(arc, 'stroke-dasharray', `${dash.toFixed(1)} ${(FAN_CIRC - dash).toFixed(1)}`);
+  setStyleOnce(arc, 'stroke', dash > 0 ? '' : 'transparent');
+  const txt = clamped !== null ? clamped.toFixed(0) + '%' : '--%';
+  if (lbl.textContent !== txt) lbl.textContent = txt;
+}
+
+// Tacca del setpoint sull'arco dell'umidità: stessa costruzione e stessa
+// geometria del gauge temperatura, solo su scala 0–100 %.
+function updateHumGaugeSetpoint(sp) {
+  const tick  = document.getElementById('gaugeHumSpTick');
+  const title = document.getElementById('gaugeHumSpTickTitle');
+  if (!tick) return;
+
+  renderHumDelta();
+
+  if (sp === null || sp === undefined || !isFinite(sp)) {
+    tick.setAttribute('opacity', '0');
+    if (title) title.textContent = '';
+    return;
+  }
+
+  const clamped = Math.max(0, Math.min(100, sp));
+  const rad = (135 + (clamped / 100) * 270) * Math.PI / 180;
+  const cx = 90, cy = 90, rIn = 54, rOut = 71;
+
+  tick.setAttribute('x1', (cx + rIn  * Math.cos(rad)).toFixed(2));
+  tick.setAttribute('y1', (cy + rIn  * Math.sin(rad)).toFixed(2));
+  tick.setAttribute('x2', (cx + rOut * Math.cos(rad)).toFixed(2));
+  tick.setAttribute('y2', (cy + rOut * Math.sin(rad)).toFixed(2));
+  tick.setAttribute('opacity', '0.95');
+  if (title) title.textContent = 'Setpoint ' + sp.toFixed(1) + ' % — centro della banda di isteresi';
+}
+
+// ── Water tank ────────────────────────────────────────────────────────────
+// Geometria condivisa fra il riempimento e le linee dei limiti, così le due
+// cose non possono finire su scale diverse.
+const TANK_MAX_KG = 4.0, TANK_TOP = 9, TANK_H = 110;
+
+function tankY(kg) {
+  const pct = Math.max(0, Math.min(1, kg / TANK_MAX_KG));
+  return TANK_TOP + TANK_H - pct * TANK_H;
+}
+
+function updateWaterTank(kg) {
+  const fill    = document.getElementById('waterFillRect');
+  const surface = document.getElementById('waterSurface');
+  const pctEl   = document.getElementById('waterTankPct');
+  if (!fill || !pctEl) return;
+  const pct = kg !== null ? Math.max(0, Math.min(1, kg / TANK_MAX_KG)) : 0;
+  const fillY = TANK_TOP + TANK_H - pct * TANK_H;
+  setAttr(fill, 'y',      fillY.toFixed(1));
+  setAttr(fill, 'height', (pct * TANK_H).toFixed(1));
+  setAttr(surface, 'y',   fillY.toFixed(1));
+  const pctTxt = kg !== null ? `${(pct * 100).toFixed(0)}%` : '--%';
+  if (pctEl.textContent !== pctTxt) pctEl.textContent = pctTxt;
+}
+
+// Linee orizzontali dei limiti di isteresi dell'elettrovalvola sul disegno
+// del serbatoio. Nascoste finché il valore non è noto.
+function updateWaterLimitMark(groupId, lineId, lblId, kg) {
+  const g    = document.getElementById(groupId);
+  const line = document.getElementById(lineId);
+  const lbl  = document.getElementById(lblId);
+  if (!g || !line || !lbl) return;
+
+  if (kg === null || kg === undefined || !isFinite(kg)) {
+    g.setAttribute('opacity', '0');
+    return;
+  }
+
+  const y = tankY(kg);
+  line.setAttribute('y1', y.toFixed(1));
+  line.setAttribute('y2', y.toFixed(1));
+  // etichetta appena sopra la linea, rientrata sotto il bordo se sono al limite
+  lbl.setAttribute('y', Math.min(TANK_TOP + TANK_H, Math.max(TANK_TOP + 6, y - 1.5)).toFixed(1));
+  // fuori scala → smorzata, per non far credere che il limite sia sul fondo/coperchio
+  g.setAttribute('opacity', (kg >= 0 && kg <= TANK_MAX_KG) ? '1' : '0.4');
+}
+
+function updateWaterLimits() {
+  updateWaterLimitMark('waterMaxMark', 'waterMaxLine', 'waterMaxLbl', _waterMax);
+  updateWaterLimitMark('waterMinMark', 'waterMinLine', 'waterMinLbl', _waterMin);
+}
+
+// ── Motor compass update ──────────────────────────────────────────────────
+function updateMotorCompass(rotState) {
+  const ccwGroup  = document.getElementById('ccwArrowGroup');
+  const cwGroup   = document.getElementById('cwArrowGroup');
+  const acw       = document.getElementById('arrowCCW');
+  const acl       = document.getElementById('arrowCW');
+  const lightCCW  = document.getElementById('lightCCW');
+  const lightCW   = document.getElementById('lightCW');
+  const lbl       = document.getElementById('motorDirLabel');
+  if (!ccwGroup || !cwGroup) return;
+
+  _lastRotState = rotState;
+  const rs = (rotState || '').toString().toLowerCase();
+  // "*_rotation_direction" = motor is actively turning right now → blink.
+  // "*_reached" = limit switch reached, motor is in position → steady light.
+  const rotatingCCW = rs === 'ccw_rotation_direction';
+  const rotatingCW  = rs === 'cw_rotation_direction';
+  const reachedCCW  = rs === 'ccw_reached';
+  const reachedCW   = rs === 'cw_reached';
+
+  const purple = cssVar('--purple'), amber = cssVar('--amber'), dim = cssVar('--border');
+
+  // Arrows: lit (steady) while actively rotating in that direction, dim otherwise.
+  setStyleOnce(ccwGroup.querySelector('path'), 'stroke', rotatingCCW ? purple : dim);
+  setStyleOnce(cwGroup.querySelector('path'),  'stroke', rotatingCW  ? amber  : dim);
+  setStyleOnce(acw, 'fill', rotatingCCW ? purple : dim);
+  setStyleOnce(acl, 'fill', rotatingCW  ? amber  : dim);
+  ccwGroup.classList.toggle('blinking', rotatingCCW);
+  cwGroup.classList.toggle('blinking',  rotatingCW);
+
+  // Reached lights: steady on at 9 o'clock (CCW) / 3 o'clock (CW), off otherwise.
+  if (lightCCW) lightCCW.classList.toggle('lit', reachedCCW);
+  if (lightCW)  lightCW.classList.toggle('lit',  reachedCW);
+
+  if (lbl) {
+    let key = 'Idle';
+    if (rotatingCCW) key = 'Rotating CCW';
+    else if (rotatingCW) key = 'Rotating CW';
+    else if (reachedCCW) key = 'CCW reached';
+    else if (reachedCW) key = 'CW reached';
+    const keyTxt = tr(key);
+    if (lbl.textContent !== keyTxt) lbl.textContent = keyTxt;
+    setStyleOnce(lbl, 'color',
+      (rotatingCCW || reachedCCW) ? 'var(--purple)'
+    : (rotatingCW  || reachedCW)  ? 'var(--amber)'
+    :                               'var(--muted)');
+  }
+}
+
+// ── Incubation phase ──────────────────────────────────────────────────────
+function incubationPhase(passed, total) {
+  if (!total || total <= 0) return '---';
+  const pct = passed / total * 100;
+  if (total <= 21) {
+    if (passed <= 0)  return 'Not Started';
+    if (passed < 18)  return 'Setting';
+    if (passed === 18) return 'Pre-lockdown';
+    if (passed < total) return 'Lockdown';
+    return 'Hatch!';
+  }
+  if (pct < 5)  return 'Not Started';
+  if (pct < 85) return 'Setting';
+  if (pct < 93) return 'Pre-lockdown';
+  if (pct < 100) return 'Lockdown';
+  return 'Hatch!';
+}
+
+// ── Stored setpoint (tracked from spinbox updates) ────────────────────────
+let _setpoint = null;
+// Riferimenti mostrati sui gauge/serbatoio della dashboard: arrivano dagli
+// stessi spinbox delle pagine di controllo, quindi non possono divergere.
+let _humSetpoint = null;
+let _lastHum = null;
+// Ultimi valori disegnati: servono a ridipingere gauge e bussola quando cambia
+// il tema, senza dover aspettare il prossimo aggiornamento dall'Arduino.
+let _lastAvg = null;
+let _lastRotState = null;
+let _waterMin = null;
+let _waterMax = null;
+let _lastDataTime = null;
+let _pidActive = false;
+let _spreadWarn = false;
+
+// Ultimi dati ricevuti: i valori di testo messi da parte li riapplica
+// flushPending(), ma gauge, serbatoio e bussola vanno ricalcolati dal dato.
+let _lastView = null, _lastMotorData = null;
+
+function refreshActivePage() {
+  flushPending();
+  // I disegni (gauge, serbatoio, bussola) si ricostruiscono dall'ultimo dato:
+  // per loro non basta riapplicare il singolo valore messo da parte.
+  if (_lastView)      applyView(_lastView);
+  if (_lastMotorData) applyMotor(_lastMotorData);
+}
+
+// ── Apply functions ───────────────────────────────────────────────────────
+function applyView(d) {
+  _lastView = d;
+  _lastDataTime = Date.now();
+
+  // Il server manda il setpoint attivo a ogni update: è la fonte autorevole.
+  // Così il Δ resta corretto anche se si perde l'eco dello spinbox.
+  if (typeof d.setpoint === 'number' && isFinite(d.setpoint)) {
+    _setpoint = d.setpoint;
+    setText('hv-sp', _setpoint.toFixed(1) + ' °C');
+  }
+
+  const t1 = (typeof d.temp1 === 'number' && isFinite(d.temp1)) ? d.temp1 : null;
+  const t2 = (typeof d.temp2 === 'number' && isFinite(d.temp2)) ? d.temp2 : null;
+  const t3 = (typeof d.temp3 === 'number' && isFinite(d.temp3)) ? d.temp3 : null;
+  const t4 = (typeof d.temp4 === 'number' && isFinite(d.temp4)) ? d.temp4 : null;
+  const te = (typeof d.externalTemp === 'number' && isFinite(d.externalTemp)) ? d.externalTemp : null;
+
+  // Dashboard tiles (number only – unit is in static label)
+  setText('temp1', fmt(t1) ?? '---');
+  setText('temp2', fmt(t2) ?? '---');
+  setText('temp3', fmt(t3) ?? '---');
+  setText('temp4', fmt(t4) ?? '---');
+  setText('externalTemp', fmt(te) ?? '---');
+
+  // Sensor validity dots
+  [['dot1', t1], ['dot2', t2], ['dot3', t3], ['dot4', t4]].forEach(([id, v]) => {
+    const el = document.getElementById(id);
+    const cls = 'tl-dot' + (v === null ? ' err' : '');
+    if (el && el.className !== cls) el.className = cls;
+  });
+
+  // Temperature page
+  setText('temp1_t',        (fmt(t1) ?? '---') + ' °C');
+  setText('temp2_t',        (fmt(t2) ?? '---') + ' °C');
+  setText('temp3_t',        (fmt(t3) ?? '---') + ' °C');
+  setText('temp4_t',        (fmt(t4) ?? '---') + ' °C');
+  setText('externalTemp_t', (fmt(te) ?? '---') + ' °C');
+  setText('heatCtrlVal_t',  (fmt(d.heatCtrlVal) ?? '---') + ' °C');
+
+  const dcRaw = (typeof d.pidDutyCycle === 'number' && isFinite(d.pidDutyCycle)) ? d.pidDutyCycle : null;
+  const dcPct = dcRaw !== null ? (dcRaw * 100).toFixed(1) + ' %' : '---';
+  setText('pidDutyCycle',   dcPct);
+  setText('pidDutyCycle_t', dcPct);
+  // Duty cycle bars
+  const dcW = dcRaw !== null ? (dcRaw * 100).toFixed(1) : 0;
+  ['dcFill', 'dcFill_t'].forEach(id => {
+    setStyleOnce(document.getElementById(id), 'width', dcW + '%');
+  });
+
+  setText('pidCurrentValue',   (fmt(d.pidCurrentValue) ?? '---') + ' °C');
+  setText('pidCurrentValue_t', (fmt(d.pidCurrentValue) ?? '---') + ' °C');
+  setText('heatCtrlVal',       (fmt(d.heatCtrlVal) ?? '---') + ' °C');
+
+  // Average temp gauge
+  const valids = [t1, t2, t3, t4].filter(v => v !== null);
+  const avg = valids.length ? valids.reduce((a, b) => a + b, 0) / valids.length : null;
+  updateTempGauge(avg);
+  updateTempGaugeSetpoint(_setpoint);
+
+  // Sensor spread
+  if (valids.length >= 2) {
+    const spread = Math.max(...valids) - Math.min(...valids);
+    setText('sensorSpread', spread.toFixed(2) + ' °C');
+    _spreadWarn = spread > 1.0;
+    setHealthItem('hd-spread', 'hv-spread', _spreadWarn ? 'warn' : 'ok',
+      spread.toFixed(2) + ' °C' + (_spreadWarn ? ' ⚠' : ''));
+  }
+
+  // Delta from setpoint.
+  // Il gauge in dashboard mostra la media dei sensori → il suo Δ è riferito a quella.
+  // Il badge nella pagina Temperature Control sta accanto a "PID value" → in modo PID
+  // dev'essere riferito allo STESSO valore che il PID usa per regolare (media delle sole
+  // temperature filtrate, calcolata lato server), non alla media grezza dei 4 sensori.
+  const badgeEl = document.getElementById('tempDeltaBadge');
+
+  const pidPv = (typeof d.pidCurrentValue === 'number' && isFinite(d.pidCurrentValue) && d.pidCurrentValue > 0)
+    ? d.pidCurrentValue : null;
+  const badgePv = (_pidActive && pidPv !== null) ? pidPv : avg;
+
+  renderTempDelta();
+
+  if (badgeEl) {
+    let txt, cls, ttl;
+    if (_setpoint !== null && badgePv !== null) {
+      const db = badgePv - _setpoint;
+      txt = (db >= 0 ? '+' : '') + db.toFixed(2) + ' °C';
+      cls = 'delta-badge ' + (Math.abs(db) < 0.3 ? 'ok' : db < 0 ? 'cold' : 'warm');
+      ttl = (_pidActive && pidPv !== null ? 'PID value ' : 'Media sensori ')
+          + badgePv.toFixed(2) + ' °C − setpoint ' + _setpoint.toFixed(1) + ' °C';
+    } else {
+      txt = '---';
+      cls = 'delta-badge ok';
+      ttl = '';
+    }
+    if (badgeEl.textContent !== txt) badgeEl.textContent = txt;
+    if (badgeEl.className   !== cls) badgeEl.className   = cls;
+    if (badgeEl.title       !== ttl) badgeEl.title       = ttl;
+  }
+
+  // Humidity
+  const hum = (typeof d.humidity1 === 'number' && isFinite(d.humidity1)) ? d.humidity1 : null;
+  updateHumGauge(hum);
+  setText('humidity1',         (fmt(hum) ?? '---') + ' %');
+  setText('tempFromHumidity',  (fmt(d.tempFromHumidity) ?? '---'));
+  setText('humidity1_w',       (fmt(hum) ?? '---') + ' %');
+  setText('tempFromHumidity_w',(fmt(d.tempFromHumidity) ?? '---') + ' °C');
+  setText('humCtrlVal_w',      (fmt(d.humCtrlVal) ?? '---') + ' %');
+  setText('waterCtrlVal_w',    (fmt(d.waterCtrlVal) ?? '---') + ' kg');
+
+  // Water
+  const wkg = (typeof d.waterWeight === 'number' && isFinite(d.waterWeight)) ? d.waterWeight : null;
+  updateWaterTank(wkg);
+  setText('waterWeight',   (fmt(wkg) ?? '---') + ' kg');
+  setText('waterWeight_w', (fmt(wkg) ?? '---') + ' kg');
+
+  // Status pills
+  setPill('heaterStatus',      d.heaterStatus,     'Heating',     'OFF');
+  setPill('heaterStatus_t',    d.heaterStatus,     'Heating',     'OFF');
+  setPill('humidifierStatus',  d.humidifierStatus, 'Humidifying', 'OFF', 'hum');
+  setPill('humidifierStatus_w',d.humidifierStatus, 'Humidifying', 'OFF', 'hum');
+  setPill('evalveStatus',      d.evalveStatus,     'Filling',     'OFF', 'vlv');
+  setPill('evalveStatus_w',    d.evalveStatus,     'Filling',     'OFF', 'vlv');
+
+  // System health panel
+  const sensorList = [[t1,'t1','TMP01'],[t2,'t2','TMP02'],[t3,'t3','TMP03'],[t4,'t4','TMP04'],[te,'ext','EXTT']];
+  sensorList.forEach(([v, key, name]) => {
+    setHealthItem('hd-'+key, 'hv-'+key,
+      v !== null ? 'ok' : 'err',
+      v !== null ? (v.toFixed(1) + ' °C') : 'Fault / no data');
+  });
+  setHealthItem('hd-htr', 'hv-htr', 'ok', d.heaterStatus ? 'ON – Heating' : 'OFF');
+  setHealthItem('hd-hum', 'hv-hum', 'ok', d.humidifierStatus ? 'ON – Humidifying' : 'OFF');
+  setHealthItem('hd-vlv', 'hv-vlv', 'ok', d.evalveStatus ? 'ON – Filling' : 'OFF');
+  setHealthItem('hd-dc',  'hv-dc',  'ok', dcPct);
+  if (_setpoint !== null) setText('hv-sp', _setpoint.toFixed(1) + ' °C');
+
+  // Update last-data time in system page
+  setText('hv-uptime', new Date().toLocaleTimeString());
+  setHealthItem('hd-arduino', 'hv-arduino', 'ok', 'Fresh');
+}
+
+function applyStatistics(d) {
+  setText('minTemp_stat',  (fmt(d.minTemp)  ?? '---') + ' °C');
+  setText('meanTemp_stat', (fmt(d.meanTemp) ?? '---') + ' °C');
+  setText('maxTemp_stat',  (fmt(d.maxTemp)  ?? '---') + ' °C');
+  setText('onCountT_stat', d.onCountT);
+  setText('offCountT_stat',d.offCountT);
+  setText('timeOnT_stat',  d.timeOnT);
+  setText('timeOffT_stat', d.timeOffT);
+  setText('minHum_stat',   (fmt(d.minHum)  ?? '---') + ' %');
+  setText('meanHum_stat',  (fmt(d.meanHum) ?? '---') + ' %');
+  setText('maxHum_stat',   (fmt(d.maxHum)  ?? '---') + ' %');
+  setText('onCountH_stat', d.onCountH);
+  setText('offCountH_stat',d.offCountH);
+  setText('timeOnH_stat',  d.timeOnH);
+  setText('timeOffH_stat', d.timeOffH);
+}
+
+function applyDaysStats(d) {
+  const passed = parseInt(d.daysPassed) || 0;
+  const left   = parseInt(d.daysLeft)   || 0;
+  const total  = passed + left;
+  const pct    = total > 0 ? Math.min(100, Math.round(passed / total * 100)) : 0;
+  const pctStr = pct + ' % complete';
+  const phase  = incubationPhase(passed, total);
+
+  setText('daysPassed',     d.daysPassed);
+  setText('daysLeft',       d.daysLeft);
+  setText('daysPassed_dash',d.daysPassed);
+  setText('daysLeft_dash',  d.daysLeft);
+  setText('incPhase',       phase);
+  setText('incPhase_dash',  phase);
+
+  ['timelineFill', 'timelineFill_dash'].forEach(id => {
+    setStyleOnce(document.getElementById(id), 'width', pct + '%');
+  });
+  setText('timelinePct',      pctStr);
+  setText('timelinePct_dash', pctStr);
+}
+
+function applyMotor(d) {
+  _lastMotorData = d;
+  setText('timePassed_motor',     d.timePassed);
+  setText('timeToNextTurn_motor', d.timeToNextTurn);
+  setText('turnsCounter_motor',   d.turnsCounter);
+  setText('mainState_motor',      d.mainState);
+  setText('manualState_motor',    d.manualState);
+  setText('rotationState_motor',  d.rotationState);
+  updateMotorCompass(d.rotationState);
+  updateMotorButtons(d.rotationState);
+  setHealthItem('hd-mtr', 'hv-mtr', 'ok', d.mainState || '---');
+}
+
+// Accende il bottone CW/CCW solo mentre il motore sta effettivamente ruotando
+// in quella direzione; lo spegne appena il finecorsa viene raggiunto (o il moto si ferma).
+function updateMotorButtons(rotationState) {
+  const rs = (rotationState || '').toLowerCase();
+  const isCW  = rs === 'cw_rotation_direction';
+  const isCCW = rs === 'ccw_rotation_direction';
+  const btnCW  = document.getElementById('btn_move_CW_motor_btn');
+  const btnCCW = document.getElementById('btn_move_CCW_motor_btn');
+  if (btnCW)  btnCW.classList.toggle('active', isCW);
+  if (btnCCW) btnCCW.classList.toggle('active', isCCW);
+}
+
+// Uno stesso parametro può comparire su più pagine (es. il set point della
+// temperatura sta sia in dashboard sia in Temperature Control): si aggiornano
+// tutti i campi che lo riferiscono, saltando solo quello che si sta digitando.
+function applySpinbox(name, value) {
+  document.querySelectorAll(`[data-sb="${name}"]`).forEach(el => {
+    if (document.activeElement !== el) el.value = value;
+  });
+
+  const num = parseFloat(value);
+  if (name === 'setPointTemperature_PID_spinBox') {
+    _setpoint = num;
+    setText('hv-sp', _setpoint.toFixed(1) + ' °C');
+    updateTempGaugeSetpoint(_setpoint);
+  } else if (name === 'setPointHumidity_spinBox') {
+    _humSetpoint = isFinite(num) ? num : null;
+    updateHumGaugeSetpoint(_humSetpoint);
+  } else if (name === 'maxHysteresisValue_waterLevelControl_spinBox') {
+    _waterMax = isFinite(num) ? num : null;
+    updateWaterLimits();
+  } else if (name === 'minHysteresisValue_waterLevelControl_spinBox') {
+    _waterMin = isFinite(num) ? num : null;
+    updateWaterLimits();
+  } else if (name === 'webRefreshInterval_spinBox') {
+    if (isFinite(num) && num > 0) _refreshIntervalMs = num;
+  } else if (name === 'fanSpeed_spinBox') {
+    updateFanGauge(isFinite(num) ? num : null);
+  }
+}
+
+// Bottoni ± dei controlli compatti in dashboard: agiscono sul campo
+// corrispondente e inviano il valore come farebbe una modifica manuale.
+function bumpSpinbox(name, delta, decimals) {
+  const el = document.querySelector(`[data-sb="${name}"]`);
+  if (!el) return;
+  const cur = parseFloat(el.value);
+  if (!isFinite(cur)) return;   // valore non ancora arrivato dal server
+  let next = parseFloat((cur + delta).toFixed(decimals));
+  if (el.min !== '' && next < parseFloat(el.min)) next = parseFloat(el.min);
+  if (el.max !== '' && next > parseFloat(el.max)) next = parseFloat(el.max);
+  document.querySelectorAll(`[data-sb="${name}"]`).forEach(x => { x.value = next; });
+  sendSpinbox(name, next);
+}
+
+// Incubation calendar state
+let _calStart = null;   // 'YYYY-MM-DD'
+let _calEnd   = null;   // 'YYYY-MM-DD'
+
+function applyDate(name, dateStr) {
+  if (name === 'startDate_dateTimeBox') {
+    const el = document.getElementById('startDate');
+    if (el && document.activeElement !== el) el.value = dateStr;
+    _calStart = dateStr ? dateStr.substring(0, 10) : null;
+    renderIncubationCalendar();
+  } else if (name === 'endDate_dateTimeBox') {
+    setText('endDate', dateStr);
+    _calEnd = dateStr ? dateStr.substring(0, 10) : null;
+    renderIncubationCalendar();
+  }
+}
+
+function applyRadio(name, checked) {
+  const map = {
+    'heaterOFF_radioBtn':        'r_htrOFF',
+    'heaterAUTO_radioBtn':       'r_htrAUTO',
+    'heaterON_radioBtn':         'r_htrON',
+    'hysteresisActive_radioBtn': 'r_hysteresis',
+    'PIDActive_radioBtn':        'r_pid',
+    'humidifierOFF_radioBtn':    'r_humOFF',
+    'humidifierAUTO_radioBtn':   'r_humAUTO',
+    'humidifierON_radioBtn':     'r_humON',
+    'evalveOFF_radioBtn':        'r_evalveOFF',
+    'evalveAUTO_radioBtn':       'r_evalveAUTO',
+    'evalveON_radioBtn':         'r_evalveON',
+  };
+  const elId = map[name];
+  if (elId && checked) {
+    const el = document.getElementById(elId);
+    if (el) el.checked = true;
+  }
+  // Track active algorithm for system page
+  if (name === 'hysteresisActive_radioBtn' && checked) {
+    _pidActive = false;
+    setHealthItem('hd-algo', 'hv-algo', 'ok', 'Hysteresis');
+  }
+  if (name === 'PIDActive_radioBtn' && checked) {
+    _pidActive = true;
+    setHealthItem('hd-algo', 'hv-algo', 'ok', 'PID + Feedforward');
+  }
+}
+
+// ── Staleness check: mark arduino data as stale if no update in 30 s ─────
+setInterval(() => {
+  if (_lastDataTime === null) return;
+  const secs = Math.round((Date.now() - _lastDataTime) / 1000);
+  if (secs > 30) {
+    setHealthItem('hd-arduino', 'hv-arduino', 'warn', secs + ' s ago');
+  }
+}, 5000);
+
+// ── Send helpers ──────────────────────────────────────────────────────────
+function sendButton(name)         { socket.emit('button_click',  { name }); }
+function sendSpinbox(name, val)   { socket.emit('spinbox_change',{ name, value: parseFloat(val) }); }
+function sendIntSpinbox(name,val) { socket.emit('spinbox_change',{ name, value: parseInt(val, 10) }); }
+function sendCheckbox(name, st)   { socket.emit('radio_toggle',  { name, state: st }); }
+function sendDate(d)              { if (d) socket.emit('date_change', { name: 'incubationStartDate', date: d }); }
+
+function sendToggleButton(name) {
+  socket.emit('button_click', { name });
+  const btn = document.getElementById('btn_' + name);
+  if (btn) btn.classList.toggle('active');
+}
+
+// ── Radio-group listeners ─────────────────────────────────────────────────
+['heaterMode', 'pidMode', 'humMode', 'evalveMode'].forEach(group => {
+  document.querySelectorAll(`[name="${group}"]`).forEach(r => {
+    r.addEventListener('change', e => {
+      if (e.target.checked)
+        socket.emit('radio_toggle', { name: e.target.value, state: true });
+    });
+  });
+});
+
+// ── Live Chart ────────────────────────────────────────────────────────────
+// 'SP' è il setpoint del PID: non è una misura, quindi va tratteggiato.
+const CHART_KEYS   = ['T1','T2','T3','T4','Te','SP'];
+const TRACE_NAMES  = { T1:'Sensor 1', T2:'Sensor 2', T3:'Sensor 3', T4:'Sensor 4',
+                       Te:'External', SP:'Setpoint' };
+const REFERENCE_KEYS = new Set(['SP']);
+let chartInited = false;
+
+// Punti tenuti nel grafico live. In modalità leggera se ne tengono 360 (un'ora
+// a un campione ogni 10 s) invece di 1440 (quattro ore): il tempo di ridisegno
+// di Plotly cresce col numero di punti, e su Pi 3 quattro ore di storia su sei
+// tracce sono il grosso del costo. La storia completa resta nei CSV e si legge
+// dalla pagina History.
+const CHART_MAX_POINTS = LITE ? 360 : 1440;
+
+// Plotly disegna su canvas: non vede il CSS, quindi i colori del tema vanno
+// letti e passati a mano, e ripassati a ogni cambio tema.
+function chartPalette() {
+  return {
+    text:   cssVar('--text'),   muted:  cssVar('--muted'),
+    border: cssVar('--border'), card:   cssVar('--card'),
+    surface: cssVar('--surface'), amber: cssVar('--amber'),
+    blue:   cssVar('--blue'),   green:  cssVar('--green'),
+    purple: cssVar('--purple'), heat:   cssVar('--heat'),
+    red:    cssVar('--red'),
+  };
+}
+
+// Stesso ordine di CHART_KEYS: T1, T2, T3, T4, Te, SP (l'ultimo è il setpoint,
+// in tinta neutra perché è un riferimento e non una misura).
+function traceColors() {
+  const p = chartPalette();
+  return [p.amber, p.blue, p.green, p.purple, p.heat, p.text];
+}
+
+function chartLayout() {
+  const p = chartPalette();
+  return {
+    // Trascinamento col tasto sinistro = spostamento, rotella = zoom.
+    // Lo zoom a riquadro resta disponibile dalla barra strumenti.
+    dragmode: 'pan',
+    margin: { t: 10, r: 20, b: 60, l: 50 },
+    paper_bgcolor: p.card,
+    plot_bgcolor:  p.surface,
+    font: { color: p.text, size: 11 },
+    legend: { orientation: 'h', y: -0.22, font: { color: p.muted } },
+    // 'x unified' più le linee guida (spikes) fanno ricalcolare e ridisegnare
+    // tutte le tracce a ogni movimento del mouse sopra il grafico: è la cosa
+    // che più fa sembrare la pagina bloccata su un Pi. In leggero si tiene il
+    // tooltip del solo punto più vicino.
+    hovermode: LITE ? 'closest' : 'x unified',
+    xaxis: {
+      type: 'date', tickformat: '%H:%M',
+      gridcolor: p.border, linecolor: p.border,
+      tickfont: { color: p.muted },
+      showspikes: !LITE, spikemode: 'across', spikesnap: 'cursor',
+      spikecolor: p.amber, spikethickness: 1, spikedash: 'dot',
+    },
+    yaxis: {
+      title: { text: '°C', font: { color: p.muted }, standoff: 4 },
+      gridcolor: p.border, linecolor: p.border,
+      tickfont: { color: p.muted },
+      showspikes: !LITE, spikemode: 'across', spikesnap: 'cursor',
+      spikecolor: p.amber, spikethickness: 1, spikedash: 'dot',
+    },
+  };
+}
+
+// Quanti campioni di setpoint sono già nel grafico: finché sono pochi la
+// spezzata è un frammento di pochi pixel, quindi si mostrano anche i punti.
+let _spPointCount = 0;
+const SPARSE_LIMIT = 10;
+
+function initChart(points) {
+  _spPointCount = points.filter(p => p.SP !== null && p.SP !== undefined).length;
+  const colors = traceColors();
+  const traces = CHART_KEYS.map((key, i) => {
+    const isRef = REFERENCE_KEYS.has(key);
+    const sparse = isRef && _spPointCount <= SPARSE_LIMIT;
+    return {
+      name: TRACE_NAMES[key], type: 'scatter',
+      mode: sparse ? 'lines+markers' : 'lines',
+      marker: { size: 5 },
+      x: points.map(p => p.ts), y: points.map(p => p[key] ?? null),
+      line: {
+        color: colors[i],
+        width: isRef ? 1.4 : 1.8,
+        dash:  isRef ? 'dash' : 'solid',
+        // un setpoint cambia a gradini, non con rampe
+        shape: isRef ? 'hv' : 'linear',
+      },
+      connectgaps: false,
+    };
+  });
+  Plotly.newPlot('liveChart', traces, chartLayout(), {
+    responsive: true, displayModeBar: true,
+    scrollZoom: true,   // zoom con la rotella del mouse
+    modeBarButtonsToRemove: ['select2d','lasso2d','toImage'],
+  });
+  chartInited = true;
+  _chartPending = [];   // la storia è nel grafico: il buffer non serve più
+}
+
+function extendChart(pt) {
+  if (!chartInited) return;
+  Plotly.extendTraces('liveChart',
+    { x: CHART_KEYS.map(() => [pt.ts]), y: CHART_KEYS.map(k => [pt[k] ?? null]) },
+    CHART_KEYS.map((_, i) => i), CHART_MAX_POINTS
+  );
+
+  // Appena i campioni di setpoint sono abbastanza, la spezzata si legge da sola
+  // e i marcatori diventano solo rumore: si passa alla sola linea, una volta.
+  if (pt.SP !== null && pt.SP !== undefined) {
+    _spPointCount++;
+    if (_spPointCount === SPARSE_LIMIT + 1) {
+      const spIndex = CHART_KEYS.indexOf('SP');
+      if (spIndex >= 0) Plotly.restyle('liveChart', { mode: 'lines' }, [spIndex]);
+    }
+  }
+}
+
+// Formatta una Date come stringa locale "ingenua" YYYY-MM-DDTHH:MM:SS,
+// stesso formato usato dal backend (datetime.now().strftime('%Y-%m-%dT%H:%M:%S')).
+// Non usare .toISOString(): quella converte in UTC e introduce uno sfasamento
+// pari al fuso orario (es. 2h in estate con CEST) rispetto ai dati disegnati.
+function toLocalNaiveISOString(d) {
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+         `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function setChartRange(minutes) {
+  if (!chartInited) return;
+  if (minutes === 0) { Plotly.relayout('liveChart', { 'xaxis.autorange': true }); return; }
+  const now  = new Date();
+  const from = new Date(now - minutes * 60000);
+  Plotly.relayout('liveChart', {
+    'xaxis.autorange': false,
+    'xaxis.range': [toLocalNaiveISOString(from), toLocalNaiveISOString(now)],
+  });
+}
+
+// I punti arrivano sempre, ma finché la pagina Live Chart non viene aperta
+// restano qui e basta: costruire il grafico al connect significava tenere nel
+// DOM oltre diecimila nodi SVG (fino a 1440 punti × 8 tracce) anche stando in
+// Dashboard, ridisegnati a ogni nuovo campione. Il buffer ha lo stesso tetto
+// del grafico, così all'apertura si vede esattamente la stessa storia.
+let _chartPending = [];
+
+socket.on('chart_history', pts => {
+  if (chartInited) { initChart(pts); return; }
+  _chartPending = pts.slice(-CHART_MAX_POINTS);
+});
+
+socket.on('update_chart', pt => {
+  if (chartInited) { extendChart(pt); return; }
+  _chartPending.push(pt);
+  if (_chartPending.length > CHART_MAX_POINTS) _chartPending.shift();
+});
+
+// Apertura della pagina Live Chart: carica Plotly se serve e disegna il buffer.
+function openLiveChart() {
+  if (chartInited) return;
+  ensurePlotly()
+    .then(() => { initChart(_chartPending); })
+    .catch(err => { console.error(err); });
+}
+
+// ── History Charts ────────────────────────────────────────────────────────
+let histType    = 'Temperatures';
+let histMode    = 'today';
+let histInited  = false;
+
+// Colori delle serie misurate, presi dal tema attivo (vedi chartPalette).
+function histColors() {
+  const p = chartPalette();
+  return [p.amber, p.blue, p.green, p.purple, p.heat, p.red, p.text];
+}
+// Riferimenti di controllo: colori/etichette dedicati, fuori dal giro dei sensori
+function histRefColors() {
+  const p = chartPalette();
+  return { SETPOINT: p.text, SP_MIN: p.muted, SP_MAX: p.muted };
+}
+const HIST_REF_NAMES  = { SETPOINT: 'Setpoint (PID)', SP_MIN: 'Hyst. min', SP_MAX: 'Hyst. max' };
+const HIST_YUNITS = {
+  Temperatures:         '°C',
+  External_Temperature: '°C',
+  Humidity:             '%',
+  Heater:               'ON/OFF',
+  Humidifier:           'ON/OFF',
+  Water_Weight:         'g',
+  PID_Duty_Cycle:       'duty [0-1]',
+};
+
+function selectHistType(btn) {
+  document.querySelectorAll('.hist-type-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  histType = btn.dataset.type;
+  loadHistPlot();
+}
+
+function selectHistMode(btn) {
+  document.querySelectorAll('.hist-mode-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  histMode = btn.dataset.mode;
+  loadHistPlot();
+}
+
+// Called from stats buttons: navigate to history page and pre-select type/mode
+function requestPlot(type, mode) {
+  // Activate sidebar item and page
+  document.querySelectorAll('#sideNav li').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('.page').forEach(x => x.classList.remove('active'));
+  const li = document.querySelector('[data-pg="history"]');
+  if (li) li.classList.add('active');
+  document.getElementById('page-history').classList.add('active');
+  _activePage = 'history';            // come nella navigazione da sidebar
+  refreshActivePage();
+  if (window.innerWidth <= 768)
+    document.getElementById('sidebar').classList.remove('open');
+
+  // Update toolbar state
+  histType = type;
+  histMode = mode;
+  document.querySelectorAll('.hist-type-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.type === type);
+  });
+  document.querySelectorAll('.hist-mode-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.mode === mode);
+  });
+
+  loadHistPlot();
+}
+
+async function loadHistPlot() {
+  const statusEl = document.getElementById('histStatus');
+  const chartEl  = document.getElementById('histChart');
+  if (!statusEl || !chartEl) return;
+
+  statusEl.textContent = 'Loading…';
+
+  try {
+    await ensurePlotly();   // qui il grafico serve davvero: ora Plotly va caricato
+    const url  = `/api/csv_data?type=${encodeURIComponent(histType)}&mode=${encodeURIComponent(histMode)}`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`Server error ${resp.status}`);
+    const data = await resp.json();
+
+    if (!data.series || data.series.length === 0 ||
+        data.series.every(s => !s.x || s.x.length === 0)) {
+      statusEl.textContent = `No data available for "${data.title || histType}".`;
+      Plotly.purge(chartEl);
+      histInited = false;
+      return;
+    }
+    statusEl.textContent = '';
+
+    // Le serie marcate 'reference' dal server (SETPOINT / SP_MIN / SP_MAX) sono
+    // riferimenti di controllo, non misure: tratteggiate e in tinta neutra, così
+    // non si confondono con i sensori.
+    let measuredIdx = 0;
+    const palette = chartPalette();
+    const measuredColors = histColors();
+    const refColors = histRefColors();
+    const traces = data.series.map(s => {
+      const isRef = !!s.reference;
+      const color = isRef
+        ? (refColors[s.name] || palette.text)
+        : measuredColors[measuredIdx++ % measuredColors.length];
+      // Con pochissimi campioni una linea è un frammento di pochi pixel:
+      // in quel caso si mostrano anche i punti, altrimenti sembra assente.
+      const points = s.y.filter(v => v !== null && v !== undefined).length;
+      return {
+        name: isRef ? (HIST_REF_NAMES[s.name] || s.name) : s.name,
+        type: 'scatter',
+        mode: points <= 10 ? 'lines+markers' : 'lines',
+        marker: { size: 5 },
+        x: s.x,
+        y: s.y,
+        line: {
+          color: color,
+          width: isRef ? 1.4 : 1.8,
+          dash:  isRef ? 'dash' : 'solid',
+          shape: isRef ? 'hv' : 'linear',   // riferimenti a gradini
+        },
+        connectgaps: false,
+      };
+    });
+
+    const tickFmt = (histMode === 'today') ? '%H:%M' : '%Y-%m-%d %H:%M';
+
+    const layout = {
+      // Come nel Live Chart: sinistro trascina, rotella zooma
+      dragmode: 'pan',
+      title: { text: data.title, font: { color: palette.text, size: 13 }, x: 0.02, xanchor: 'left' },
+      margin: { t: 44, r: 20, b: 90, l: 58 },
+      paper_bgcolor: palette.card,
+      plot_bgcolor:  palette.surface,
+      font: { color: palette.text, size: 11 },
+      legend: { orientation: 'h', y: -0.26, font: { color: palette.muted } },
+      // vedi chartLayout(): in modalità leggera niente hover unificato né spikes
+      hovermode: LITE ? 'closest' : 'x unified',
+      xaxis: {
+        type: 'date',
+        tickformat: tickFmt,
+        tickangle: -30,
+        gridcolor: palette.border, linecolor: palette.border,
+        tickfont: { color: palette.muted },
+        showspikes: !LITE, spikemode: 'across', spikesnap: 'cursor',
+        spikecolor: palette.amber, spikethickness: 1, spikedash: 'dot',
+      },
+      yaxis: {
+        title: { text: HIST_YUNITS[histType] || '', font: { color: palette.muted }, standoff: 4 },
+        gridcolor: palette.border, linecolor: palette.border,
+        tickfont: { color: palette.muted },
+        showspikes: !LITE, spikemode: 'across', spikesnap: 'cursor',
+        spikecolor: palette.amber, spikethickness: 1, spikedash: 'dot',
+      },
+    };
+
+    Plotly.react(chartEl, traces, layout, {
+      responsive: true, displayModeBar: true,
+      scrollZoom: true,   // zoom con la rotella del mouse
+      modeBarButtonsToRemove: ['select2d', 'lasso2d'],
+    });
+    histInited = true;
+  } catch (e) {
+    statusEl.textContent = 'Error: ' + e.message;
+  }
+}
+
+function histSetRange(minutes) {
+  const chartEl = document.getElementById('histChart');
+  if (!histInited || !chartEl || !chartEl.data) return;
+  if (minutes === 0) {
+    Plotly.relayout(chartEl, { 'xaxis.autorange': true });
+    return;
+  }
+  const now  = new Date();
+  const from = new Date(now - minutes * 60000);
+  Plotly.relayout(chartEl, {
+    'xaxis.autorange': false,
+    'xaxis.range': [toLocalNaiveISOString(from), toLocalNaiveISOString(now)],
+  });
+}
+
+// ── Incubation calendar ───────────────────────────────────────────────────
+const _MONTH_NAMES = ['January','February','March','April','May','June',
+                      'July','August','September','October','November','December'];
+const _DAY_NAMES   = ['Mo','Tu','We','Th','Fr','Sa','Su'];
+
+function renderIncubationCalendar() {
+  const el = document.getElementById('incubationCalendar');
+  if (!el) return;
+
+  if (!_calStart || !_calEnd) {
+    el.innerHTML = `<span style="color:var(--muted);font-size:.8rem">${tr('Set start date and duration to see the calendar.')}</span>`;
+    return;
+  }
+
+  const start = new Date(_calStart + 'T00:00:00');
+  const end   = new Date(_calEnd   + 'T00:00:00');
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+
+  if (isNaN(start) || isNaN(end) || end < start) return;
+
+  // Always show exactly 2 consecutive months starting from start month
+  const sm = new Date(start.getFullYear(), start.getMonth(), 1);
+  const months = [
+    new Date(sm),
+    new Date(sm.getFullYear(), sm.getMonth() + 1, 1)
+  ];
+
+  let html = '<div class="inc-cal">';
+
+  for (const ms of months) {
+    const y  = ms.getFullYear();
+    const mo = ms.getMonth();
+    const daysInMonth = new Date(y, mo + 1, 0).getDate();
+    // First day of month: 0=Sun → convert to Mon=0
+    const firstDow = (new Date(y, mo, 1).getDay() + 6) % 7;
+
+    html += `<div class="inc-cal-month">`;
+    html += `<h4>${tr(_MONTH_NAMES[mo])} ${y}</h4>`;
+    html += `<div class="inc-cal-grid">`;
+
+    // Week-day headers
+    _DAY_NAMES.forEach(d => html += `<div class="inc-cal-hdr">${tr(d)}</div>`);
+
+    // Empty leading cells
+    for (let i = 0; i < firstDow; i++) html += `<div></div>`;
+
+    // Day cells
+    for (let d = 1; d <= daysInMonth; d++) {
+      const day  = new Date(y, mo, d);
+      const t    = day.getTime();
+      const isStart = t === start.getTime();
+      const isEnd   = t === end.getTime();
+      const isToday = t === today.getTime();
+
+      const cls = ['inc-cal-day'];
+      if (isStart) cls.push('start-d');
+      if (isEnd)   cls.push('end-d');
+
+      if (isToday) {
+        cls.push('today');
+      } else if (day >= start && day < today && day <= end) {
+        cls.push('passed');
+      } else if (day > today && day <= end) {
+        cls.push('remain');
+      }
+
+      const tip = isStart ? 'Start of incubation'
+                : isEnd   ? '🥚 Hatch day'
+                : isToday ? 'Today'
+                : '';
+
+      html += `<div class="${cls.join(' ')}"${tip ? ` title="${tip}"` : ''}>${d}</div>`;
+    }
+
+    html += `</div></div>`;
+  }
+
+  html += '</div>';
+  el.innerHTML = html;
+}
+
+// ── Language / theme init (must run after everything above is defined) ────
+setLanguage(currentLang);
+// L'attributo data-theme è già stato messo dallo script nel <head> per evitare
+// il lampo: qui si allinea il resto (selezione nella pagina, colori runtime).
+setTheme(currentTheme);
+
+</script>
+</body>
+</html>
