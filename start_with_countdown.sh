@@ -1,7 +1,7 @@
 #!/bin/bash
 export DISPLAY=:0
 export XAUTHORITY=/home/filippo/.Xauthority
-# exec >> /home/filippo/Documents/PyQT_GUI/debug.log 2>&1  # Decommentare per debug
+# exec >> /home/filippo/Documents/PyHTML_GUI/debug.log 2>&1  # Decommentare per debug
 
 # Attende finché il display X è disponibile
 while ! xset q > /dev/null 2>&1; do
@@ -46,8 +46,8 @@ echo -e "\n${YELLOW}Starting application now!${RESET}"
 sleep 3
 
 export DISPLAY=:0
-/home/filippo/Documents/PyQT_GUI/venv-py312/bin/python3 -u \
-    /home/filippo/Documents/PyQT_GUI/eggsIncubatorMVVM.py
+/home/filippo/Documents/PyHTML_GUI/venv-py312/bin/python3 -u \
+    /home/filippo/Documents/PyHTML_GUI/eggsIncubatorMVVM.py
 
 echo -e "\nScript terminato. Premi un tasto per chiudere..."
 read -n 1

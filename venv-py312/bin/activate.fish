@@ -33,7 +33,7 @@ end
 # Unset irrelevant variables.
 deactivate nondestructive
 
-set -gx VIRTUAL_ENV "/home/filippo/Documents/PyQT_GUI/venv-py312"
+set -gx VIRTUAL_ENV "/home/filippo/Documents/PyHTML_GUI/venv-py312"
 
 set -gx _OLD_VIRTUAL_PATH $PATH
 set -gx PATH "$VIRTUAL_ENV/bin" $PATH
