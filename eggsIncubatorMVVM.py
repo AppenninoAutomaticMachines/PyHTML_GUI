@@ -2,8 +2,6 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import random
-from PyQt5 import QtCore, QtWidgets
-from eggsIncubatorGUI import Ui_MainWindow  # Import the UI class directly
 
 import serial
 import re
@@ -21,6 +19,43 @@ import math
 import threading
 from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO, emit as sio_emit
+
+
+class _BoundSignal:
+    """Un singolo segnale legato a un'istanza: lista di slot + emit sincrono."""
+    def __init__(self):
+        self._slots = []
+
+    def connect(self, slot):
+        self._slots.append(slot)
+
+    def emit(self, *args):
+        for slot in list(self._slots):
+            slot(*args)
+
+
+class Signal:
+    """
+    Sostituto minimale di QtCore.pyqtSignal, usato per comunicare fra i thread
+    senza dipendere da PyQt5. Non essendoci più una GUI Qt, non serve un event
+    loop che smisti i segnali: ogni .emit() chiama i suoi slot direttamente,
+    in modo sincrono, nel thread chiamante.
+    """
+    def __init__(self, *_types):
+        pass  # i tipi non sono verificati, servono solo a documentare l'uso
+
+    def __set_name__(self, owner, name):
+        self._attr = f"_signal_{name}"
+
+    def __get__(self, instance, owner):
+        if instance is None:
+            return self
+        bound = instance.__dict__.get(self._attr)
+        if bound is None:
+            bound = _BoundSignal()
+            instance.__dict__[self._attr] = bound
+        return bound
+
 
 '''
     SALVATAGGIO DEI PARAMETRI:
@@ -325,9 +360,9 @@ def api_csv_data():
 # ---------------------------------------------------------------------------
 
 
-class SerialThread(QtCore.QThread):
-    data_received = QtCore.pyqtSignal(list)
-    board_reset_detected = QtCore.pyqtSignal()  # Arduino ripartito: vedi tag BOOT
+class SerialThread(threading.Thread):
+    data_received = Signal(list)
+    board_reset_detected = Signal()  # Arduino ripartito: vedi tag BOOT
 
     def __init__(self, port = portSetup, baudrate = baudrateSetup):
         super().__init__()
@@ -530,7 +565,7 @@ class SerialThread(QtCore.QThread):
     
     def stop(self):
         self.running = False
-        self.wait()  # Ensure the thread finishes before returning
+        self.join()  # Ensure the thread finishes before returning
         self.close_serial_port()
         
     def close_serial_port(self):
@@ -684,15 +719,15 @@ class SerialThread(QtCore.QThread):
         '''
 
 
-class MainSoftwareThread(QtCore.QThread):
-    update_view = QtCore.pyqtSignal(list)  # Signal to update the view (MainWindow)
-    update_statistics = QtCore.pyqtSignal(list) # Signal to update the Statistics View Window
-    update_days_statistics = QtCore.pyqtSignal(list) # Signal to update the Statistics View Window
-    update_spinbox_value = QtCore.pyqtSignal(str, float)  # Signal to update spinbox (name, value)
-    update_int_spinbox_value = QtCore.pyqtSignal(str, int)  # Signal to update spinbox (name, value)
-    update_motor = QtCore.pyqtSignal(list) # Signal to update the motor view
-    update_date_edit = QtCore.pyqtSignal(str, object)
-    update_radio_button_exclusive = QtCore.pyqtSignal(str, bool) #Se i radio button fanno parte dello stesso gruppo (stesso layout o QButtonGroup), PyQt gestisce automaticamente l’esclusività: selezionare uno li deselezionerà tutti gli altri del gruppo.
+class MainSoftwareThread(threading.Thread):
+    update_view = Signal(list)  # Signal to update the view (MainWindow)
+    update_statistics = Signal(list) # Signal to update the Statistics View Window
+    update_days_statistics = Signal(list) # Signal to update the Statistics View Window
+    update_spinbox_value = Signal(str, float)  # Signal to update spinbox (name, value)
+    update_int_spinbox_value = Signal(str, int)  # Signal to update spinbox (name, value)
+    update_motor = Signal(list) # Signal to update the motor view
+    update_date_edit = Signal(str, object)
+    update_radio_button_exclusive = Signal(str, bool) #Se i radio button fanno parte dello stesso gruppo (stesso layout o QButtonGroup), la exclusività va gestita a mano: selezionare uno deve deselezionare gli altri del gruppo.
     
     def __init__(self):
         super().__init__()
@@ -1168,7 +1203,7 @@ class MainSoftwareThread(QtCore.QThread):
     def stop(self):
         self.running = False
         self.serial_thread.stop()
-        self.serial_thread.wait()
+        self.serial_thread.join()
         
     def handle_button_click(self, button_name):
         self.main_software_thread_log_message('INFO', f"[MainSoftwareThread] Processing button {button_name}")
@@ -3456,23 +3491,22 @@ class MainSoftwareThread(QtCore.QThread):
                 '''                  
                 self.acknowledge_from_external = None # reset 
 
-class WebBridge(QtCore.QObject):
+class WebBridge:
     """
-    Replaces MainWindow.  Bridges MainSoftwareThread (QThread/pyqtSignal) with the
-    web front-end (Flask-SocketIO).  Lives in the Qt main thread so all signals from
-    MainSoftwareThread are delivered here via Qt's queued connection.
+    Replaces MainWindow. Bridges MainSoftwareThread (Signal-based) with the
+    web front-end (Flask-SocketIO). Signals are delivered synchronously, in
+    whichever thread calls .emit() — there's no Qt event loop involved.
     """
 
     # Signals sent TO MainSoftwareThread (same interface as MainWindow)
-    button_clicked               = QtCore.pyqtSignal(str)
-    float_spinBox_value_changed  = QtCore.pyqtSignal(str, float)
-    initialization_step          = QtCore.pyqtSignal(str, float)
-    initialization_done          = QtCore.pyqtSignal(str, bool)
-    radio_button_toggled         = QtCore.pyqtSignal(str, bool)
-    date_changed                 = QtCore.pyqtSignal(str, object)
+    button_clicked               = Signal(str)
+    float_spinBox_value_changed  = Signal(str, float)
+    initialization_step          = Signal(str, float)
+    initialization_done          = Signal(str, bool)
+    radio_button_toggled         = Signal(str, bool)
+    date_changed                 = Signal(str, object)
 
     def __init__(self, main_software_thread):
-        super().__init__()
         self.current_state = {}   # cache – sent to new browsers on connect
         self._chart_buf       = deque(maxlen=1440)   # 4 h × 1 sample/10 s
         self._chart_last_ts   = 0.0
@@ -3719,302 +3753,13 @@ class WebBridge(QtCore.QObject):
         socketio.emit('update_radio', {'name': name, 'checked': value})
 
 
-# NOTE: MainWindow is kept for reference but is no longer instantiated.
-class MainWindow(QtWidgets.QMainWindow):
-    # Define custom signals - this is done to send button/spinBox and other custom signals to other thread MainSoftwareThread: use Qt Signals
-    button_clicked = QtCore.pyqtSignal(str)  # Emits button name
-    float_spinBox_value_changed = QtCore.pyqtSignal(str, float)  # Emits spinbox value  // METTI INT se intero
-    initialization_step = QtCore.pyqtSignal(str, float)
-    initialization_done = QtCore.pyqtSignal(str, bool)
-    radio_button_toggled = QtCore.pyqtSignal(str, bool)
-    date_changed = QtCore.pyqtSignal(str, object)   # object = datetime.date - CALENDAR WIDGET
-    
-    def __init__(self, main_software_thread):
-        super().__init__()
-        self.ui = Ui_MainWindow()
-        self.ui.setupUi(self)
-        self.main_software_thread = main_software_thread
-        self.main_software_thread.update_view.connect(self.update_display_data)
-        self.main_software_thread.update_statistics.connect(self.update_statistics_data)
-        self.main_software_thread.update_days_statistics.connect(self.update_days_statistics_data)
-        self.main_software_thread.update_motor.connect(self.update_display_motor_data)
-        self.main_software_thread.update_date_edit.connect(self.update_date_edit)
-        
-        # Connect signals to main software thread slots
-        self.button_clicked.connect(self.main_software_thread.handle_button_click)
-        self.float_spinBox_value_changed.connect(self.main_software_thread.handle_float_spinBox_value)
-        self.initialization_step.connect(self.main_software_thread.handle_intialization_step)
-        self.initialization_done.connect(self.main_software_thread.handle_initialization_done) # signals that MainWindow has completed the initialization procedure (all emit signals have been sent)
-        self.main_software_thread.update_spinbox_value.connect(self.update_spinbox)
-        self.main_software_thread.update_int_spinbox_value.connect(self.update_int_spinbox)
-        self.radio_button_toggled.connect(self.main_software_thread.handle_radio_button_toggle)
-        self.date_changed.connect(self.main_software_thread.on_date_received)
-        self.main_software_thread.update_radio_button_exclusive.connect(self.update_radio_button_exclusive)
-
-
-        # Connect buttons to handlers that emit signals
-        self.ui.move_CW_motor_btn.clicked.connect(lambda: self.emit_button_signal(self.ui.move_CW_motor_btn.objectName()))
-        self.ui.move_CCW_motor_btn.clicked.connect(lambda: self.emit_button_signal(self.ui.move_CCW_motor_btn.objectName()))
-        self.ui.layHorizontal_motor_btn.clicked.connect(lambda: self.emit_button_signal(self.ui.layHorizontal_motor_btn.objectName()))
-        self.ui.forceEggsTurn_motor_btn.clicked.connect(lambda: self.emit_button_signal(self.ui.forceEggsTurn_motor_btn.objectName()))
-        self.ui.reset_statistics_T_btn.clicked.connect(lambda: self.emit_button_signal(self.ui.reset_statistics_T_btn.objectName()))
-        
-        self.ui.plotMeanTemperature_btn.clicked.connect(lambda: self.emit_button_signal(self.ui.plotMeanTemperature_btn.objectName()))
-        self.ui.plotExternalTemperature_btn.clicked.connect(lambda: self.emit_button_signal(self.ui.plotExternalTemperature_btn.objectName()))
-        self.ui.plotAllDays_temp_T_btn.clicked.connect(lambda: self.emit_button_signal(self.ui.plotAllDays_temp_T_btn.objectName()))
-        self.ui.plotToday_temp_T_btn.clicked.connect(lambda: self.emit_button_signal(self.ui.plotToday_temp_T_btn.objectName()))
-        self.ui.plotAllDays_humidity_H_btn.clicked.connect(lambda: self.emit_button_signal(self.ui.plotAllDays_humidity_H_btn.objectName()))
-        self.ui.plotToday_humidity_H_btn.clicked.connect(lambda: self.emit_button_signal(self.ui.plotToday_humidity_H_btn.objectName()))
-        
-        self.ui.plotToday_cnt_H_btn.clicked.connect(lambda: self.emit_button_signal(self.ui.plotToday_cnt_H_btn.objectName()))
-        self.ui.plotAllDays_cnt_H_btn.clicked.connect(lambda: self.emit_button_signal(self.ui.plotAllDays_cnt_H_btn.objectName()))
-
-        # Connect radio buttons to emit its values
-        # Connect radio buttons to emit signals
-        radio_buttons = [
-            self.ui.heaterOFF_radioBtn,
-            self.ui.heaterAUTO_radioBtn,
-            self.ui.heaterON_radioBtn,
-            self.ui.humidifierOFF_radioBtn,
-            self.ui.humidifierAUTO_radioBtn,
-            self.ui.humidifierON_radioBtn,
-            self.ui.evalveOFF_radioBtn,
-            self.ui.evalveAUTO_radioBtn,
-            self.ui.evalveON_radioBtn,
-            self.ui.removeErrors_from_T_plots,
-            self.ui.removeErrors_from_H_plots,
-            self.ui.hysteresisActive_radioBtn,
-            self.ui.PIDActive_radioBtn
-        ]
-        for radio_button in radio_buttons:
-            radio_button.toggled.connect(lambda state, btn=radio_button: self.emit_radio_button_signal(btn.objectName(), state))
-        
-        # Connect spinBox to emit its values
-        self.ui.rotation_interval_spinBox.valueChanged.connect(lambda value: self.emit_float_spinbox_signal(self.ui.rotation_interval_spinBox.objectName(), value))
-        
-        # Temperature Hysteresis
-        self.ui.maxHysteresisValue_temperature_spinBox.valueChanged.connect(lambda value: self.emit_float_spinbox_signal(self.ui.maxHysteresisValue_temperature_spinBox.objectName(), value))
-        self.ui.minHysteresisValue_temperature_spinBox.valueChanged.connect(lambda value: self.emit_float_spinbox_signal(self.ui.minHysteresisValue_temperature_spinBox.objectName(), value))
-        
-        # Humidity Hysteresis
-        self.ui.maxHysteresisValue_humidity_spinBox.valueChanged.connect(lambda value: self.emit_float_spinbox_signal(self.ui.maxHysteresisValue_humidity_spinBox.objectName(), value))
-        self.ui.minHysteresisValue_humidity_spinBox.valueChanged.connect(lambda value: self.emit_float_spinbox_signal(self.ui.minHysteresisValue_humidity_spinBox.objectName(), value))
-        
-        # Water Level Control Hysteresis
-        self.ui.maxHysteresisValue_waterLevelControl_spinBox.valueChanged.connect(lambda value: self.emit_float_spinbox_signal(self.ui.maxHysteresisValue_waterLevelControl_spinBox.objectName(), value))
-        self.ui.minHysteresisValue_waterLevelControl_spinBox.valueChanged.connect(lambda value: self.emit_float_spinbox_signal(self.ui.minHysteresisValue_waterLevelControl_spinBox.objectName(), value))
-        
-        # PID control
-        self.ui.setPointTemperature_PID_spinBox.valueChanged.connect(lambda value: self.emit_float_spinbox_signal(self.ui.setPointTemperature_PID_spinBox.objectName(), value))
-        self.ui.Kp_spinBox.valueChanged.connect(lambda value: self.emit_float_spinbox_signal(self.ui.Kp_spinBox.objectName(), value))
-        self.ui.Ki_spinBox.valueChanged.connect(lambda value: self.emit_float_spinbox_signal(self.ui.Ki_spinBox.objectName(), value))
-        self.ui.Kd_spinBox.valueChanged.connect(lambda value: self.emit_float_spinbox_signal(self.ui.Kd_spinBox.objectName(), value))        
-        self.ui.days_duration_spinBox.valueChanged.connect(lambda value: self.emit_float_spinbox_signal(self.ui.days_duration_spinBox.objectName(), value))
-        
-        self.ui.calendarWidget.selectionChanged.connect(self.on_calendar_selection_changed)
-        
-        # Connect to send initialization values to the mainSoftwareThread
-        self.emit_initialization_values(self.ui.maxHysteresisValue_temperature_spinBox.objectName(), self.ui.maxHysteresisValue_temperature_spinBox.value())
-        self.emit_initialization_values(self.ui.minHysteresisValue_temperature_spinBox.objectName(), self.ui.minHysteresisValue_temperature_spinBox.value())
-        
-        self.emit_initialization_values(self.ui.maxHysteresisValue_humidity_spinBox.objectName(), self.ui.maxHysteresisValue_humidity_spinBox.value())
-        self.emit_initialization_values(self.ui.minHysteresisValue_humidity_spinBox.objectName(), self.ui.minHysteresisValue_humidity_spinBox.value())
-        
-        self.emit_initialization_values(self.ui.maxHysteresisValue_waterLevelControl_spinBox.objectName(), self.ui.maxHysteresisValue_waterLevelControl_spinBox.value())
-        self.emit_initialization_values(self.ui.minHysteresisValue_waterLevelControl_spinBox.objectName(), self.ui.minHysteresisValue_waterLevelControl_spinBox.value())
-        
-        # PID control
-        self.emit_initialization_values(self.ui.setPointTemperature_PID_spinBox.objectName(), self.ui.setPointTemperature_PID_spinBox.value())
-        self.emit_initialization_values(self.ui.Kp_spinBox.objectName(), self.ui.Kp_spinBox.value())
-        self.emit_initialization_values(self.ui.Ki_spinBox.objectName(), self.ui.Ki_spinBox.value())
-        self.emit_initialization_values(self.ui.Kd_spinBox.objectName(), self.ui.Kd_spinBox.value())
-        
-        
-        self.emit_initialization_values(self.ui.days_duration_spinBox.objectName(), self.ui.days_duration_spinBox.value())
-        
-        # signaling that ManWindow initialization procedure has been completed
-        self.initialization_done.emit("GUI_initialization_procedure", True)
-
-
-    def emit_initialization_values(self, spinbox_name, value):
-        self.initialization_step.emit(spinbox_name, value)
-        
-        
-    def emit_button_signal(self, button_name):
-        self.button_clicked.emit(button_name)
-         #print(f"Button clicked: {button_name}")
-
-    def emit_float_spinbox_signal(self, spinbox_name, value):
-        #value = float(value)  # Cast value to float explicitly
-        self.float_spinBox_value_changed.emit(spinbox_name, value)
-        #print(f"[MainWindow] Emitting signal from {spinbox_name} with value: {value}")
-        
-    def emit_radio_button_signal(self, radio_button_name, state):
-        self.radio_button_toggled.emit(radio_button_name, state)
-        
-    def on_calendar_selection_changed(self):
-        qdate = self.ui.calendarWidget.selectedDate() # qdate = PyQt5.QtCore.QDate(2025, 12, 26)
-        py_date = qdate.toPyDate() # ← chiave  py_date = 2025-12-26
-        self.date_changed.emit("incubationStartDate", py_date)
-        
-    def update_date_edit(self, date_edit_name, date):
-        qdate = QtCore.QDate(date.year, date.month, date.day)
-        
-        date_edit = getattr(self.ui, date_edit_name, None)  # Get the spinbox dynamically
-        if date_edit: # ensure it exists
-            date_edit.setDate(qdate)
-
-    def update_display_data(self, all_data):
-        # Update the temperature labels in the GUI
-        if len(all_data) >= 6: # perché il numero??
-            self.ui.temperature1_T.setText(f"{all_data[0]} °C")
-            self.ui.temperature2_T.setText(f"{all_data[1]} °C")
-            self.ui.temperature3_T.setText(f"{all_data[2]} °C")
-            self.ui.temperature4_T.setText(f"{all_data[3]} °C")
-            self.ui.humidity1_H.setText(f"{all_data[4]} %")
-            self.ui.temperatureFromHumidity1.setText(f"{all_data[5]} °C")
-            self.ui.heatCtrlVal.setText(f"{all_data[6]} °C")
-            self.ui.humCtrlVal.setText(f"{all_data[7]} %")
-            if all_data[8] == True:
-                self.ui.heaterStatus.setText(f"Heating ON!")
-            else:
-                self.ui.heaterStatus.setText(f"OFF")
-            if all_data[9] == True:
-                self.ui.humidifierStatus.setText(f"Humidifying ON!")
-            else:
-                self.ui.humidifierStatus.setText(f"OFF")
-            self.ui.externalTemperature.setText(f"{all_data[10]} °C")
-            self.ui.waterTankWeight_1.setText(f"{all_data[11]} kg")
-            self.ui.waterLevelControlVal.setText(f"{all_data[12]} kg")
-            if all_data[13] == True:
-                self.ui.evalveStatus.setText(f"Filling Water ON!")
-            else:
-                self.ui.evalveStatus.setText(f"OFF")
-            self.ui.PID_CurrentValue.setText(f"{all_data[14]} °C")
-            self.ui.PID_DutyCycle.setText(f"{all_data[15]} %")
-            
-            #self.ui.temperature4_2.setText(f"{all_data[3]} °C") PER TEMPERATURA DA UMIDITA
-            
-    def update_statistics_data(self, all_data):
-        # da implementare la parte di update delle statistiche
-        if len(all_data) > 0:
-            self.ui.minTemp_T.setText(f"{all_data[0]} °C")
-            self.ui.meanTemp_T.setText(f"{all_data[1]} °C")
-            self.ui.maxTemp_T.setText(f"{all_data[2]} °C")
-            self.ui.onCounter_T.setText(f"{all_data[3]}")
-			# VISUALIZZAZIONE DEI TEMPI: il programma di base mi manda dei secondi. E' qui che stampo la stringa opportunamente in min o h
-            self.ui.timeOn_T.setText(self.format_time(all_data[5]))
-            self.ui.timeOFF_T.setText(self.format_time(all_data[6]))
-            self.ui.minHum_H.setText(f"{all_data[7]} %")
-            self.ui.meanHum_H.setText(f"{all_data[8]} %")
-            self.ui.maxHum_H.setText(f"{all_data[9]} %")
-            self.ui.onCounter_H.setText(f"{all_data[10]}")
-            self.ui.offCounter_H.setText(f"{all_data[11]}")
-            self.ui.timeOn_H.setText(self.format_time(all_data[12]))
-            self.ui.timeOFF_H.setText(self.format_time(all_data[13]))
-            
-        pass
-    
-    def update_days_statistics_data(self, all_data):
-        # da implementare la parte di update delle statistiche
-        if len(all_data) > 0:
-            self.ui.daysPassed.setText(f"{all_data[0]}")
-            self.ui.daysLeft.setText(f"{all_data[1]}")
-            
-        pass
-    
-    def format_time(self, value, unit = None, simple_format = False):
-        """
-            Unit argument is optional:
-                If unit is "sec", it returns only seconds.
-                If unit is "min", it returns only minutes.
-                If unit is "hour", it returns only hours.
-                If unit is None (default), it follows the mixed format.
-        """
-        
-        if unit == "sec":
-            return f"{value} sec"
-        elif unit == "min":
-            return f"{value // 60} min"
-        elif unit == "hour":
-            return f"{value // 3600} h"
-        
-        # Simple format: Only minutes if 60 ≤ value < 3600, only hours if value ≥ 3600
-        if simple_format:
-            if value >= 3600:
-                return f"{value // 3600} h"
-            elif value >= 60:
-                return f"{value // 60} min"
-        
-        # Default behavior (detailed format)
-        if value < 60:
-            return f"{value} sec"
-        elif value < 3600:
-            minutes = value // 60
-            seconds = value % 60
-            return f"{minutes} min {seconds} sec" if seconds else f"{minutes} min"
-        else:
-            hours = value // 3600
-            minutes = (value % 3600) // 60
-            return f"{hours} h {minutes} min" if minutes else f"{hours} h"
-
-            
-    def update_display_motor_data(self, all_data):
-        if len(all_data) > 0:
-            self.ui.timePassed.setText(self.format_time(all_data[0]))
-            self.ui.timeToNextTurn.setText(self.format_time(all_data[1]))
-            self.ui.turnsCounter.setText(f"{all_data[2]}")
-            self.ui.main_state.setText(f"{all_data[3]}")
-            self.ui.manual_state.setText(f"{all_data[4]}")
-            self.ui.rotation_state.setText(f"{all_data[5]}")
-
-    def update_spinbox(self, spinbox_name, value):
-        """ Update the spinbox in the GUI safely from another thread """
-        spinbox = getattr(self.ui, spinbox_name, None)  # Get the spinbox dynamically
-        if spinbox:  # Ensure the spinbox exists
-            spinbox.setValue(value)  # Set the new value safely in the GUI thread
-            
-    def update_int_spinbox(self, spinbox_name, value):
-        """ 
-            Questa funzione è leggermente diversa dal caso prima, perché il valore passato in questo caso dal main thread al thread della GUI
-            è di tipo INT! questo è definito nel punto un cui si definiscno i segnali di comunicazione fra i due thread. 
-                update_spinbox_value = QtCore.pyqtSignal(str, float) --> fa un cast a float in automatico quando invia i sengali da un thread all'altro
-                update_int_spinbox_value = QtCore.pyqtSignal(str, int) --> fa un cast a int in automatico
-        """
-        spinbox = getattr(self.ui, spinbox_name, None)  # Get the spinbox dynamically
-        if spinbox:  # Ensure the spinbox exists
-            spinbox.setValue(value)  # Set the new value safely in the GUI thread
-            
-    def update_radio_button_exclusive(self, radio_button_name, value):
-        radio_button = getattr(self.ui, radio_button_name, None)  # Get the spinbox dynamically
-        if radio_button:  # Ensure the spinbox exists
-            radio_button.setChecked(value)  # Set the new value safely in the GUI thread
-    '''       
-    def handle_radio_button(self):
-        sender = self.sender()
-        if sender.isChecked():
-            print(f"Radio button '{sender.text()}' selected")
-    '''
-    def closeEvent(self, event):
-        # Ensure the threads are stopped when the window is closed
-        self.main_software_thread.stop()
-        self.main_software_thread.wait()
-        super().closeEvent(event)
-
-
 if __name__ == "__main__":
-    import os
-    # Run Qt headlessly (no display needed – only event loop for QThread/signals)
-    os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
-
-    qt_app = QtCore.QCoreApplication(sys.argv)
-
     main_software_thread = MainSoftwareThread()
 
     # WebBridge replaces MainWindow: connects threads to the web front-end
     web_bridge = WebBridge(main_software_thread)
 
-    # Flask-SocketIO runs in a daemon thread; Qt event loop runs in the main thread
+    # Flask-SocketIO runs in a daemon thread
     flask_thread = threading.Thread(
         target=lambda: socketio.run(
             flask_app, host='0.0.0.0', port=5000,
@@ -4070,6 +3815,8 @@ if __name__ == "__main__":
 
     print("Incubator web server started → http://localhost:5000")
     print("Da un altro PC in rete: http://<ip-di-questa-macchina>:5000")
-    sys.exit(qt_app.exec_())
 
-    sys.exit(app.exec_())
+    try:
+        main_software_thread.join()
+    except KeyboardInterrupt:
+        main_software_thread.stop()

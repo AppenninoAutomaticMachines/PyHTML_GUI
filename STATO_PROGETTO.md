@@ -1,5 +1,5 @@
 # Stato progetto – Incubatrice Automatica
-Aggiornato: 2026-09-21
+Aggiornato: 2026-09-25
 
 ---
 
@@ -14,9 +14,8 @@ con un server Flask+SocketIO che serve una pagina HTML accessibile dal browser.
 - `eggsIncubatorMVVM.py` – aggiunto Flask, SocketIO, classe `WebBridge`, nuovo `__main__`
 - `templates/index.html` – nuova interfaccia web (creata da zero)
 
-**Perché PyQt5 rimane:**
-`SerialThread` e `MainSoftwareThread` usano ancora `QThread`/`pyqtSignal`.
-Si usa `QCoreApplication` (headless, senza display) solo per l'event loop Qt.
+**PyQt5 non è più una dipendenza del progetto** — vedi la sezione "RISOLTO:
+rimozione completa di PyQt5" più sotto.
 
 **Avvio sul Raspberry Pi:**
 ```bash
@@ -38,7 +37,7 @@ Nessun port-forwarding necessario. L'IP Tailscale del Pi è fisso.
 
 Funziona esattamente come prima:
 - All'avvio `MainSoftwareThread` legge `Parameters/parameters.json`
-- I valori vengono inviati al browser tramite i signal Qt → WebBridge → SocketIO
+- I valori vengono inviati al browser tramite i signal (classe `Signal`, non più Qt) → WebBridge → SocketIO
 - Il browser riceve tutto via evento `full_state` alla connessione
 - I nuovi browser che si collegano dopo l'avvio ricevono lo stato corrente dalla cache `current_state`
 
@@ -671,6 +670,52 @@ copiando `ProfiloLibrary` dentro la cartella dello sketch, priorità sulla copia
 oppure un effetto laterale della `String` frammentata risolta nella sezione precedente. Il
 rilevamento del fronte fatto a mano (`_prevCCWLimit`/`_prevCWLimit`) resta comunque in
 sketch: autosufficiente, non dipende più da `ccw_trigger`/`cw_trigger`.
+
+---
+
+## RISOLTO: rimozione completa di PyQt5
+
+Con l'interfaccia web ormai definitiva, PyQt5 è stato tolto del tutto — prima
+restava solo per `QThread`/`pyqtSignal`, non per una GUI reale.
+
+**Passo 1 — tolto il codice GUI morto.** `eggsIncubatorMVVM.py` importava
+ancora `eggsIncubatorGUI.Ui_MainWindow` e conteneva la classe `MainWindow`
+(già segnata a commento "kept for reference but is no longer instantiated":
+`WebBridge` l'aveva sostituita, ma la classe non era mai stata cancellata).
+Rimossi l'import, la classe `MainWindow` (~286 righe) e il file
+`eggsIncubatorGUI.py` stesso (nessun altro punto del repo lo referenziava).
+
+**Passo 2 — tolto anche `QtCore`.** Restavano tre usi non-GUI: `SerialThread`
+e `MainSoftwareThread` ereditavano da `QThread` e usavano `pyqtSignal` per
+comunicare tra thread; `__main__` avviava `QCoreApplication`/`exec_()` solo
+per far girare l'event loop che smistava quei segnali (non per disegnare
+nulla — da qui il `QT_QPA_PLATFORM=offscreen`).
+
+Sostituito con:
+- una classe `Signal` fatta in casa (descrittore Python, vedi inizio del
+  file) che replica `.connect()`/`.emit()` di `pyqtSignal` ma chiama gli
+  slot **in modo sincrono e diretto**, nel thread che emette — non serve
+  più un event loop a smistarli;
+- `SerialThread`/`MainSoftwareThread` ora ereditano da `threading.Thread`
+  (stesso pattern `run()`/`start()`; `.wait()` → `.join()`);
+- `WebBridge` è una classe Python normale, non più `QObject`;
+- `__main__` non crea più `QCoreApplication`: il thread principale fa
+  `main_software_thread.join()`, con `except KeyboardInterrupt` che chiama
+  `.stop()` per uno spegnimento pulito (`Ctrl+C` prima non era gestito
+  esplicitamente).
+
+**Effetto collaterale voluto:** l'inizializzazione dei parametri da
+`WebBridge` verso `MainSoftwareThread` (`initialization_done.emit(...)`)
+ora avviene in modo sincrono *prima* che `main_software_thread.start()`
+sia chiamato, invece di dipendere dal timing con cui l'event loop Qt
+processava la coda — stesso risultato, più deterministico.
+
+**Verifica:** revisione manuale riga per riga di tutte le firme di classe,
+`.connect()`/`.emit()`, `.wait()`→`.join()` e del blocco `__main__` (nessun
+riferimento a `PyQt5`/`QtCore`/`QtWidgets` residuo, verificato con grep). Non
+eseguito a runtime — vedi [[app-non-eseguibile-su-questa-macchina]]. Da
+testare sul Pi: avvio, connessione browser, click pulsanti/spinbox, comando
+motore, riavvio Arduino (`handle_board_reset`), `Ctrl+C` da terminale.
 
 ---
 
