@@ -110,7 +110,9 @@ log_message('ERROR', 'This is an error message.')
 # (Windows) è COM9, sul Raspberry che fa girare l'incubatrice è /dev/ttyUSB0.
 # Scegliendola qui lo stesso file gira su entrambi senza modifiche a mano — che
 # altrimenti si perdono a ogni copia del progetto da una macchina all'altra.
-portSetup = "/dev/ttyUSB0" if sys.platform.startswith("linux") else "COM9"
+# "/dev/ttyUSB0"
+# "/dev/ttyACM0"
+portSetup = "/dev/ttyACM0" if sys.platform.startswith("linux") else "COM9"
 
 baudrateSetup = 115200
 timeout = 0.1

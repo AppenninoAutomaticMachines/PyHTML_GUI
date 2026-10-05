@@ -68,7 +68,7 @@ inline void safeAnalogWrite(uint8_t pin, int val) {
 #endif
 
 /* General CONSTANTS */
-#define SIMULATION true  // Set to 'true' to run without hardware (all sensor values are simulated)
+#define SIMULATION false  // Set to 'true' to run without hardware (all sensor values are simulated)
 #define SERIAL_PRINT_CHECK false
 #define SERIAL_SPEED 115200
 #define NUMBER_OF_TEMPERATURES_SENSORS_ON_ONE_WIRE_BUS 4 //sensori di temperatura
@@ -94,13 +94,13 @@ inline void safeAnalogWrite(uint8_t pin, int val) {
 #define ONE_WIRE_BUS 26
 #define STEPPER_MOTOR_DIRECTION_PIN 5
 #define STEPPER_MOTOR_STEP_PIN 6
-#define FAN_PWM_PIN 7 // ventole ricircolo aria: PWM 0-100% (pin libero, ex FREE_PC817_PIN, mai usato)
+#define FAN_PWM_PIN 13 // ventole ricircolo aria: PWM 0-100% (pin libero, ex FREE_PC817_PIN, mai usato)
 #define CW_INDUCTOR_PIN 45 // induttore finecorsa DESTRO (vista posteriore)
 #define CCW_INDUCTOR_PIN 43 // induttore finecorsa SINISTRO (vista posteriore)
 #define WATER_ELECTROVALVE_PIN 41 // relay 4
 #define HUMIDIFIER_PIN 39 // relay 3
 #define HEATER_PIN 37 // relay 1
-#define HEATER_PWM_PIN 13
+#define HEATER_PWM_PIN 12
 
 #define ONE_WIRE_BUS_EXTERNAL_TEMPERATURE 22
 #define FREE_OUTPUT_RELAY_PC817_2 23
