@@ -77,7 +77,7 @@ inline void safeAnalogWrite(uint8_t pin, int val) {
 #define ENABLE_HUMIDIFIER true
 #define ENABLE_WATER_ELECTROVALVE true
 #define TEMPERATURE_PRECISION 9 // DS18B20 digital termometer provides 9-bit to 12-bit Celsius temperature measurements
-#define NUMBER_OF_LIGHTS 3
+#define NUMBER_OF_MACHINE_SIGNALS 3
 #if !defined(DEVICE_DISCONNECTED)
 #define DEVICE_DISCONNECTED -127
 #endif
@@ -254,23 +254,60 @@ float waterWeight_saturated = 5000.0;
 /* END HX711 WEIGHT CONTROL LOAD CELL */
 
 
-/* MACHINE SINGALING DEVICE - SECTION */
-const int lightPins[NUMBER_OF_LIGHTS] = {PIN_RED_LIGHT, PIN_ORANGE_LIGHT, PIN_GREEN_LIGHT};
-const int buzzerPin = PIN_BUZZER;
+/* MACHINE SINGALING DEVICE - SECTION
+   Torretta luminosa a 3 luci (verde/arancione/rossa) + buzzer.
 
-unsigned long lastUpdate = 0;
-const unsigned long runInterval = 100;
+   Classi di messaggio da rpy, una luce ciascuna:
+     SIG_NORMAL  (verde)     -> normal operation
+     SIG_WARNING (arancione) -> warning
+     SIG_ALARM   (rosso)     -> alarm, attiva anche il buzzer
 
-enum State { OFF, ON, FLASH_FAST, FLASH_SLOW, BEEP_FAST, BEEP_SLOW };
+   Pattern disponibili per pilotare luci e buzzer:
+     PATTERN_OFF           spento
+     PATTERN_SOLID         N3: fisso ON
+     PATTERN_SLOW_BLINK    N1: 1s ON / 1s OFF
+     PATTERN_TRIPLE_FLASH  N2: 3 lampeggi veloci in 0.5s, poi pausa di 0.8s
 
-struct Device {
-    State state;
-    unsigned long lastToggle;
-    bool currentState;
+   Il mapping luce/buzzer -> pattern (lightPatternMap, buzzerPatternForAlarm)
+   è deciso qui in inizializzazione: va rivisto a ogni flash del firmware in
+   base a cosa si vuole segnalare con quale pattern.
+*/
+typedef enum {
+  SIG_NORMAL  = 0,
+  SIG_WARNING = 1,
+  SIG_ALARM   = 2
+} MachineSignal;
+
+typedef enum {
+  PATTERN_OFF = 0,
+  PATTERN_SOLID,
+  PATTERN_SLOW_BLINK,
+  PATTERN_TRIPLE_FLASH
+} LightPattern;
+
+struct SignalOutput {
+  int pin;
+  LightPattern pattern;
+  unsigned long patternStartTime;
+  bool currentState;
 };
 
-Device lights[NUMBER_OF_LIGHTS];
-Device buzzer;
+// Indice = MachineSignal (NORMAL, WARNING, ALARM)
+SignalOutput lightOutputs[NUMBER_OF_MACHINE_SIGNALS] = {
+  { PIN_GREEN_LIGHT,  PATTERN_OFF, 0, false },
+  { PIN_ORANGE_LIGHT, PATTERN_OFF, 0, false },
+  { PIN_RED_LIGHT,    PATTERN_OFF, 0, false },
+};
+SignalOutput buzzerOutput = { PIN_BUZZER, PATTERN_OFF, 0, false };
+
+LightPattern lightPatternMap[NUMBER_OF_MACHINE_SIGNALS] = {
+  PATTERN_SOLID,        // SIG_NORMAL  (verde)
+  PATTERN_SLOW_BLINK,   // SIG_WARNING (arancione)
+  PATTERN_TRIPLE_FLASH, // SIG_ALARM   (rosso)
+};
+LightPattern buzzerPatternForAlarm = PATTERN_SLOW_BLINK;
+
+MachineSignal currentMachineSignal = SIG_NORMAL;
 /* END MACHINE SINGALING DEVICE - SECTION */
 
 // SENDING TO RPY
@@ -322,7 +359,9 @@ int  freeRam();
 void byteToHex(uint8_t byteValue, char *hexValue);
 void addressToCharArray(DeviceAddress deviceAddress, char *charArray);
 int  readFromBoard();
-void updateDevice(Device &device, int pin, unsigned long fastInterval, unsigned long slowInterval);
+bool computePatternState(LightPattern pattern, unsigned long elapsed);
+void updateSignalOutput(SignalOutput &out);
+void setMachineSignal(MachineSignal sig);
 void queueOutgoing(const char *fmt, ...);
 void trimInPlace(char *s);
 bool splitCommand(const char *input,
@@ -397,14 +436,13 @@ void setup() {
   pinMode(CW_INDUCTOR_PIN, INPUT);
 
   /* MACHINE SINGALING DEVICE - SECTION */
-  for (int i = 0; i < NUMBER_OF_LIGHTS; i++) {
-        pinMode(lightPins[i], OUTPUT);
-        digitalWrite(lightPins[i], LOW);
-        lights[i] = {OFF, 0, LOW};
-    }
-    pinMode(buzzerPin, OUTPUT);
-    digitalWrite(buzzerPin, LOW);
-    buzzer = {OFF, 0, LOW};
+  for (int i = 0; i < NUMBER_OF_MACHINE_SIGNALS; i++) {
+    pinMode(lightOutputs[i].pin, OUTPUT);
+    digitalWrite(lightOutputs[i].pin, LOW);
+  }
+  pinMode(buzzerOutput.pin, OUTPUT);
+  digitalWrite(buzzerOutput.pin, LOW);
+  setMachineSignal(SIG_NORMAL); // stato di default all'accensione, in attesa del primo comando SIG01 da rpy
 
   Serial.begin(SERIAL_SPEED);
 
@@ -594,6 +632,19 @@ void loop() {
           if (f > 1.0f) f = 1.0f;
           fan_speed_cmd = f;
           analogWrite(FAN_PWM_PIN, (int)(fan_speed_cmd * 255.0f + 0.5f));
+          if(strlen(uid) > 0){
+              snprintf(pendingACK, sizeof(pendingACK), "<%s, %s, %s>", tag, value, uid);
+          }
+        }
+
+        if (strcmp(tag, "SIG01") == 0) {
+          if (strcmp(value, "NORMAL") == 0) {
+            setMachineSignal(SIG_NORMAL);
+          } else if (strcmp(value, "WARNING") == 0) {
+            setMachineSignal(SIG_WARNING);
+          } else if (strcmp(value, "ALARM") == 0) {
+            setMachineSignal(SIG_ALARM);
+          }
           if(strlen(uid) > 0){
               snprintf(pendingACK, sizeof(pendingACK), "<%s, %s, %s>", tag, value, uid);
           }
@@ -988,12 +1039,8 @@ void loop() {
   /* END STEPPER MOTOR CONTROL SECTION */
 
   /* MACHINE SINGALING DEVICE - SECTION */
-  unsigned long currentTime = millis();
-    if (currentTime - lastUpdate >= runInterval) {
-        for (int i = 0; i < NUMBER_OF_LIGHTS; i++) updateDevice(lights[i], lightPins[i], 200, 500);
-        updateDevice(buzzer, buzzerPin, 100, 300);
-        lastUpdate = currentTime;
-    }
+  for (int i = 0; i < NUMBER_OF_MACHINE_SIGNALS; i++) updateSignalOutput(lightOutputs[i]);
+  updateSignalOutput(buzzerOutput);
   /* END MACHINE SINGALING DEVICE - SECTION */
 
 
@@ -1300,30 +1347,71 @@ int readFromBoard(){
   return receivedCommandsIndex;
 }
 
-void updateDevice(Device &device, int pin, unsigned long fastInterval, unsigned long slowInterval) {
-    unsigned long currentTime = millis();
-    unsigned long interval = (device.state == FLASH_FAST || device.state == BEEP_FAST) ? fastInterval : slowInterval;
+/*
+   Stato ON/OFF di un pattern in funzione del tempo trascorso dal suo avvio
+   (patternStartTime), non di un contatore di toggle: la fase è quindi
+   indipendente dalla granularità con cui updateSignalOutput() viene
+   chiamata.
+*/
+bool computePatternState(LightPattern pattern, unsigned long elapsed) {
+  switch (pattern) {
+    case PATTERN_OFF:
+      return false;
 
-    switch (device.state) {
-        case OFF:
-            digitalWrite(pin, LOW);
-            device.currentState = LOW;
-            break;
-        case ON:
-            digitalWrite(pin, HIGH);
-            device.currentState = HIGH;
-            break;
-        case FLASH_FAST:
-        case FLASH_SLOW:
-        case BEEP_FAST:
-        case BEEP_SLOW:
-            if (currentTime - device.lastToggle >= interval) {
-                device.currentState = !device.currentState;
-                digitalWrite(pin, device.currentState);
-                device.lastToggle = currentTime;
-            }
-            break;
+    case PATTERN_SOLID:
+      return true;
+
+    case PATTERN_SLOW_BLINK: {
+      // N1: 1s ON, 1s OFF
+      const unsigned long PERIOD_MS = 2000UL;
+      return (elapsed % PERIOD_MS) < 1000UL;
     }
+
+    case PATTERN_TRIPLE_FLASH: {
+      // N2: 3 lampeggi veloci in 0.5s (6 fette ON/OFF alternate da ~83ms),
+      // poi 0.8s di pausa. Periodo totale 1.3s.
+      const unsigned long FLASH_WINDOW_MS = 500UL;
+      const unsigned long PERIOD_MS = FLASH_WINDOW_MS + 800UL;
+      const unsigned long SLICE_MS = FLASH_WINDOW_MS / 6UL;
+      unsigned long phase = elapsed % PERIOD_MS;
+      if (phase >= FLASH_WINDOW_MS) return false;
+      return ((phase / SLICE_MS) % 2UL) == 0UL;
+    }
+
+    default:
+      return false;
+  }
+}
+
+void updateSignalOutput(SignalOutput &out) {
+  bool newState = computePatternState(out.pattern, millis() - out.patternStartTime);
+  if (newState != out.currentState) {
+    out.currentState = newState;
+    digitalWrite(out.pin, newState ? HIGH : LOW);
+  }
+}
+
+/*
+   Applica la classe di messaggio (normal operation / warning / alarm):
+   accende la sola luce corrispondente col pattern mappato in
+   lightPatternMap, spegne le altre due, e attiva il buzzer solo per
+   SIG_ALARM.
+*/
+void setMachineSignal(MachineSignal sig) {
+  currentMachineSignal = sig;
+  unsigned long now = millis();
+
+  for (int i = 0; i < NUMBER_OF_MACHINE_SIGNALS; i++) {
+    lightOutputs[i].pattern = (i == (int)sig) ? lightPatternMap[i] : PATTERN_OFF;
+    lightOutputs[i].patternStartTime = now;
+    lightOutputs[i].currentState = false;
+    digitalWrite(lightOutputs[i].pin, LOW);
+  }
+
+  buzzerOutput.pattern = (sig == SIG_ALARM) ? buzzerPatternForAlarm : PATTERN_OFF;
+  buzzerOutput.patternStartTime = now;
+  buzzerOutput.currentState = false;
+  digitalWrite(buzzerOutput.pin, LOW);
 }
 
 bool splitCommand(const char *input,

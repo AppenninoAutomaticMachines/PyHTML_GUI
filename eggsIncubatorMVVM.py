@@ -133,7 +133,15 @@ BROWSER_LITE_MODE = None
     "FAN01" = valore FLOAT da 0.0 a 1.0 (percentuale/100) per il duty cycle PWM delle ventole di ricircolo aria
 """
 identifiers = ["TMP", "HUM", "HTP", "IND", "EXTT", "WGT"]  # Global variable
-command_tags = ["HTR01", "HUMER01", "STPR01", "ELV01", "PWM01", "FAN01"]
+command_tags = ["HTR01", "HUMER01", "STPR01", "ELV01", "PWM01", "FAN01", "SIG01"]
+
+# Classi di messaggio per la torretta luminosa (vedi SIG01 lato Arduino):
+# verde = normal operation, arancione = warning, rosso = alarm (attiva anche il buzzer).
+MACHINE_SIGNAL_NORMAL = "NORMAL"
+MACHINE_SIGNAL_WARNING = "WARNING"
+MACHINE_SIGNAL_ALARM = "ALARM"
+MACHINE_SIGNAL_VALUES = (MACHINE_SIGNAL_NORMAL, MACHINE_SIGNAL_WARNING, MACHINE_SIGNAL_ALARM)
+MAX_MACHINE_MESSAGES_IN_STATE = 100  # storico mandato ai nuovi browser via full_state
 
 # ---------------------------------------------------------------------------
 # Accesso robusto ai file
@@ -730,7 +738,8 @@ class MainSoftwareThread(threading.Thread):
     update_motor = Signal(list) # Signal to update the motor view
     update_date_edit = Signal(str, object)
     update_radio_button_exclusive = Signal(str, bool) #Se i radio button fanno parte dello stesso gruppo (stesso layout o QButtonGroup), la exclusività va gestita a mano: selezionare uno deve deselezionare gli altri del gruppo.
-    
+    update_machine_message = Signal(dict)  # messaggio testuale associato a un comando SIG01, per la sezione "Machine Messages" della dashboard
+
     def __init__(self):
         super().__init__()
         self.initialization_from_GUI_completed = False
@@ -948,7 +957,10 @@ class MainSoftwareThread(threading.Thread):
         self.backup_parameters_file()
         self.main_software_thread_log_message('INFO', f"GUI initialization completed: loading parameters from file is done. Now the program starts!")
 
-        while self.running:            
+        # Primo messaggio di segnalazione: la macchina è in funzione, avvio avvenuto correttamente.
+        self.signal_normal_operation("Macchina avviata correttamente: normal operation.")
+
+        while self.running:         
             if self.command_list:
                 for cmd, value in self.command_list:
                     self.serial_thread.add_command(cmd, value)
@@ -1141,6 +1153,46 @@ class MainSoftwareThread(threading.Thread):
             
     def queue_command(self, cmd, value):
         self.command_list.append((cmd, value))
+
+    def send_machine_signal(self, signal_type):
+        """
+        Invia ad Arduino la classe di messaggio per la torretta luminosa
+        (SIG01): NORMAL -> verde, WARNING -> arancione, ALARM -> rosso +
+        buzzer. Il comando è in command_tags, quindi viene accodato con un
+        uid e SerialThread ne attende l'ACK (con retry automatico).
+        """
+        if signal_type not in MACHINE_SIGNAL_VALUES:
+            raise ValueError(f"Invalid machine signal type: {signal_type}")
+        self.queue_command("SIG01", signal_type)
+
+    def signal_normal_operation(self, testo=None):
+        self.send_machine_signal(MACHINE_SIGNAL_NORMAL)
+        self._emit_machine_message(MACHINE_SIGNAL_NORMAL, testo)
+
+    def signal_warning(self, testo=None):
+        self.send_machine_signal(MACHINE_SIGNAL_WARNING)
+        self._emit_machine_message(MACHINE_SIGNAL_WARNING, testo)
+
+    def signal_alarm(self, testo=None):
+        self.send_machine_signal(MACHINE_SIGNAL_ALARM)
+        self._emit_machine_message(MACHINE_SIGNAL_ALARM, testo)
+
+    def _emit_machine_message(self, signal_type, testo):
+        """
+        Se è specificato un testo, lo invia alla dashboard (sezione "Machine
+        Messages") insieme alla classe di segnalazione, per colorare la riga
+        dello stesso colore della luce. Il comando verso Arduino (SIG01) è
+        già stato accodato da send_machine_signal() sopra, a prescindere dal
+        testo: qui non si tocca quella parte.
+        """
+        if not testo:
+            return
+        self.update_machine_message.emit({
+            'id': uuid.uuid4().hex[:8],
+            'text': testo,
+            'signal_type': signal_type,
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        })
 
     def handle_board_reset(self):
         """
@@ -3523,6 +3575,7 @@ class WebBridge:
         main_software_thread.update_int_spinbox_value.connect(self.on_update_int_spinbox)
         main_software_thread.update_date_edit.connect(self.on_update_date_edit)
         main_software_thread.update_radio_button_exclusive.connect(self.on_update_radio_button)
+        main_software_thread.update_machine_message.connect(self.on_update_machine_message)
 
         # WebBridge → MainSoftwareThread
         self.button_clicked.connect(main_software_thread.handle_button_click)
@@ -3753,6 +3806,16 @@ class WebBridge:
             self.current_state['radio_buttons'] = {}
         self.current_state['radio_buttons'][name] = value
         socketio.emit('update_radio', {'name': name, 'checked': value})
+
+    def on_update_machine_message(self, message):
+        if 'messages' not in self.current_state:
+            self.current_state['messages'] = []
+        self.current_state['messages'].append(message)
+        # Limita lo storico condiviso con i nuovi browser che si collegano: la
+        # "X" e il "Reset all" lato HTML agiscono solo sulla visualizzazione
+        # del browser corrente, non su questo storico.
+        self.current_state['messages'] = self.current_state['messages'][-MAX_MACHINE_MESSAGES_IN_STATE:]
+        socketio.emit('machine_message', message)
 
 
 if __name__ == "__main__":

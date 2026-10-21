@@ -60,6 +60,9 @@
       --blue-bd:     rgba(77,166,255,.30);
       --green-bg:    rgba(62,203,122,.14);
       --green-bd:    rgba(62,203,122,.30);
+      --warn:        #f2a93a;
+      --warn-bg:     rgba(242,169,58,.14);
+      --warn-bd:     rgba(242,169,58,.32);
       --red-bg:      rgba(232,72,72,.12);
       --red-bd:      rgba(232,72,72,.30);
       --red-bg-hi:   rgba(232,72,72,.22);
@@ -95,6 +98,9 @@
       --blue-bd:     rgba(21,102,194,.32);
       --green-bg:    rgba(26,132,73,.11);
       --green-bd:    rgba(26,132,73,.32);
+      --warn:        #b5690a;
+      --warn-bg:     rgba(181,105,10,.10);
+      --warn-bd:     rgba(181,105,10,.32);
       --red-bg:      rgba(191,43,43,.10);
       --red-bd:      rgba(191,43,43,.32);
       --red-bg-hi:   rgba(191,43,43,.20);
@@ -130,6 +136,9 @@
       --blue-bd:     rgba(106,166,255,.30);
       --green-bg:    rgba(73,214,127,.13);
       --green-bd:    rgba(73,214,127,.30);
+      --warn:        #ffb15c;
+      --warn-bg:     rgba(255,177,92,.13);
+      --warn-bd:     rgba(255,177,92,.30);
       --red-bg:      rgba(255,107,107,.12);
       --red-bd:      rgba(255,107,107,.30);
       --red-bg-hi:   rgba(255,107,107,.22);
@@ -167,6 +176,9 @@
       --blue-bd:     rgba(21,102,194,.32);
       --green-bg:    rgba(76,154,42,.11);
       --green-bd:    rgba(76,154,42,.32);
+      --warn:        #b5690a;
+      --warn-bg:     rgba(181,105,10,.10);
+      --warn-bd:     rgba(181,105,10,.32);
       --red-bg:      rgba(191,43,43,.10);
       --red-bd:      rgba(191,43,43,.32);
       --red-bg-hi:   rgba(191,43,43,.20);
@@ -409,6 +421,28 @@
       padding: .27rem .58rem; cursor: pointer;
     }
     .btn-danger-dk:hover { background: var(--red-bg-hi); }
+
+    /* ── Machine messages (torretta luminosa) ───────────────────────────── */
+    .msg-list { display: flex; flex-direction: column; gap: .4rem; max-height: 260px; overflow-y: auto; }
+    .msg-item {
+      display: flex; align-items: flex-start; gap: .55rem;
+      border: 1px solid var(--border); border-radius: 8px;
+      padding: .4rem .55rem;
+    }
+    .msg-item.msg-normal  { background: var(--green-bg); border-color: var(--green-bd); }
+    .msg-item.msg-warning { background: var(--warn-bg);  border-color: var(--warn-bd); }
+    .msg-item.msg-alarm   { background: var(--red-bg);   border-color: var(--red-bd); }
+    .msg-icon { font-size: .7rem; line-height: 1.4; flex-shrink: 0; }
+    .msg-body { flex: 1; min-width: 0; }
+    .msg-text { font-size: .81rem; color: var(--text); word-break: break-word; }
+    .msg-time { font-size: .65rem; color: var(--muted); margin-top: .1rem; font-variant-numeric: tabular-nums; }
+    .msg-close {
+      background: none; border: none; cursor: pointer;
+      color: var(--muted); font-size: .8rem; line-height: 1;
+      padding: .1rem .2rem; flex-shrink: 0;
+    }
+    .msg-close:hover { color: var(--text); }
+    .msg-empty { color: var(--muted); font-size: .78rem; text-align: center; padding: .5rem 0; }
 
     /* ── Delta badge ───────────────────────────────────────────────────── */
     .delta-badge {
@@ -991,6 +1025,19 @@
         <span id="timelinePct_dash" style="font-size:.72rem;color:var(--muted)">— %</span>
       </div>
       <div class="t-bar"><div class="t-fill" id="timelineFill_dash" style="width:0%"></div></div>
+    </div>
+
+    <!-- Row 4: Machine Messages -->
+    <div class="gcard mt-2">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <div class="gcard-title" style="margin-bottom:0">📨 <span class="i18n-auto">Machine Messages</span></div>
+        <button class="btn-danger-dk" onclick="resetMachineMessages()">
+          <span class="i18n-auto">Reset all</span>
+        </button>
+      </div>
+      <div id="machineMessagesList" class="msg-list">
+        <div class="msg-empty i18n-auto" id="msgEmptyHint">No messages yet.</div>
+      </div>
     </div>
   </div>
 
@@ -2153,7 +2200,55 @@ socket.on('full_state', state => {
     Object.entries(state.dates).forEach(([n, v]) => applyDate(n, v));
   if (state.radio_buttons)
     Object.entries(state.radio_buttons).forEach(([n, v]) => applyRadio(n, v));
+  // Riproduce lo storico messaggi (più vecchio -> più recente): ogni
+  // addMachineMessage() inserisce in cima, quindi a fine ciclo il più
+  // recente resta in cima, come nel flusso realtime.
+  if (state.messages) state.messages.forEach(m => addMachineMessage(m));
 });
+
+// ── Machine messages (torretta luminosa: SIG01 con testo da MainSoftwareThread) ──
+const MACHINE_MSG_ICON  = { NORMAL: '🟢', WARNING: '🟠', ALARM: '🔴' };
+const MACHINE_MSG_CLASS = { NORMAL: 'msg-normal', WARNING: 'msg-warning', ALARM: 'msg-alarm' };
+
+function addMachineMessage(msg) {
+  const list = document.getElementById('machineMessagesList');
+  const emptyHint = document.getElementById('msgEmptyHint');
+  if (emptyHint) emptyHint.style.display = 'none';
+
+  const item = document.createElement('div');
+  item.className = 'msg-item ' + (MACHINE_MSG_CLASS[msg.signal_type] || 'msg-normal');
+  item.dataset.id = msg.id;
+  item.innerHTML =
+    '<span class="msg-icon"></span>' +
+    '<div class="msg-body"><div class="msg-text"></div><div class="msg-time"></div></div>' +
+    '<button type="button" class="msg-close" title="Dismiss">✕</button>';
+  item.querySelector('.msg-icon').textContent = MACHINE_MSG_ICON[msg.signal_type] || '⚪';
+  item.querySelector('.msg-text').textContent = msg.text;
+  item.querySelector('.msg-time').textContent = msg.timestamp || '';
+  item.querySelector('.msg-close').addEventListener('click', () => dismissMachineMessage(msg.id));
+
+  if (list.firstChild) list.insertBefore(item, list.firstChild);
+  else list.appendChild(item);
+}
+
+function dismissMachineMessage(id) {
+  const list = document.getElementById('machineMessagesList');
+  const item = list.querySelector(`[data-id="${id}"]`);
+  if (item) item.remove();
+  if (!list.querySelector('.msg-item')) {
+    const emptyHint = document.getElementById('msgEmptyHint');
+    if (emptyHint) emptyHint.style.display = '';
+  }
+}
+
+function resetMachineMessages() {
+  const list = document.getElementById('machineMessagesList');
+  list.querySelectorAll('.msg-item').forEach(el => el.remove());
+  const emptyHint = document.getElementById('msgEmptyHint');
+  if (emptyHint) emptyHint.style.display = '';
+}
+
+socket.on('machine_message', msg => addMachineMessage(msg));
 
 // ── Refresh rate del rendering ───────────────────────────────────────────
 // Il frame dall'Arduino arriva ~1 volta al secondo; in un'incubatrice la
