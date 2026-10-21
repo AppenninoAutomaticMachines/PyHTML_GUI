@@ -1,0 +1,38 @@
+1) gestione allarmi - torretta luminosa
+La macchina ha un dispositivo di segnalazione torretta luminosa con 3 luci verde, arancione e rossa e un buzzer di segnalazione audio.
+#define PIN_RED_LIGHT 25
+#define PIN_ORANGE_LIGHT 27
+#define PIN_GREEN_LIGHT 29
+#define PIN_BUZZER 31
+
+Implementa lato arduino 3 classi di messaggio che corrispondono alle 3 luci:
+green = operating, orange = warning red = alarm (oppure proponi un'altra convenzione). Se arriva un messaggio di tipo alarm, allora viene contestualmente attivato anche il buzzer.
+Predisponi alcuni pattern per comandare i vari output:  pattern N1 1 secondo ON e 1 secondo OFF ; pattern N2 3 lampeggi veloci in sequenza (in 0.5s), poi 0.8s di pausa, poi riprendi.
+pattern N3 Fisso ON.
+
+Da rpy arriveranno dei comandi dove viene specificato il tipo di allarme (normal operation, warning, alarm), che attiverà la luce corrispondente.
+In inizializzazione di arduino decido io il mapping luce-pattern (si, accetto di farlo ogni volta in cui faccio flash del firmware)
+
+Lato rpy (quind python) prevedi dei metodi per inviare questi comandi (con relativo ack da arduino).
+Inizia già predisponendo un primo messaggio che all'avvio di tutto il sistema dà un OK, dicendo che la macchina è in normal operation.
+
+
+ 
+2) gestione messaggi in pagina HTML
+ORa una modifica nell'interfaccia grafica.
+Nella dashboard principale aggiungi una sezione dinamica dove vengono mostrati i messaggi. Ogni volta che il python invia un messaggio tramite una segnalazione ad Arduino, 
+vorrei mostrare un messaggio in pagina HTML.
+In particolare, modifica i metodi di send_normal_operation, send_warning e send alarm, aggiungendo un campo di 'testo'. Se specifico un certo testo, allora questo testo deve essere
+mostrato nella pagina HTML. Magari quella riga deve avere lo sfondo dello stesso colore del messaggio. Se, invece, non predispongo un testo, allora non fa nulla di più. La parte di generazione
+del messaggio verso arduino deve rimanere la stessa di ora.
+IN HTML ogni messaggio ha una X per cancellarlo dalla visualizzazione. Predisponi anche un tasto di reset all
+
+
+3) warning dopo un certo tempo se l'umidità non torna > livello minimo
+ in questo progetto c'è un set point per l'umidità. Vorrei inserire un alarm: aggiungi due parametri modificabili nella
+  sezione Control > Water & Humidity. Uno è una % di scostamento dal setpoint, l'altro è un tempo in #minuti. in particolare, ogni qualvolta il livello di umidità scende sotto
+  al (set point - setpoint * % impostata), e se rimane sotto per più di questo tempo settato (default a 20min), allora deve essere attivato
+  un messaggio di allarme (testo: Humidity level < set point level for too much time! check water level! '. 
+  Se, per esempio, imposti set point 50%. E questo nuovo parametro di % lo imposti al 20%, significa che se il livello di umidità diventa < (50% - 50%*0.2 = 40%) per più di 20min, allora deve
+  essere inviato un messaggio di allarme.
+  Attenzione: il messaggio viene inviato una volta sola, appena succede l'evento (non costantemente fintantoche l'evento è in corso). Devi predisporre anche un reset di questo messaggio appena l'umidità torna ad essere >= set point

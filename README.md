@@ -93,3 +93,26 @@ reale via Socket.IO (`update_machine_message` → evento `machine_message`):
 - lo storico (ultimi 100 messaggi) viene mantenuto server-side e reinviato ai nuovi
   browser che si collegano tramite `full_state`, quindi un refresh della pagina può
   far riapparire messaggi già rimossi in precedenza.
+
+## Allarme umidità bassa (Control → Water & Humidity)
+
+Due parametri modificabili nella card "Humidity Low Alarm":
+
+- **Deviation from set point (%)** — `humidityAlarmDeviationPercent_spinBox`, default 20%
+- **Persistence time (min)** — `humidityAlarmTimeMinutes_spinBox`, default 20 min
+
+La soglia di allarme è `set point - set point * deviazione%`: con set point 50% e
+deviazione 20% la soglia è 40%. Se l'umidità (media letta dal controllore a isteresi,
+`hhc.get_mean_value()`) resta sotto quella soglia per più dei minuti impostati, viene
+inviato **una sola volta** un allarme (`signal_alarm`, torretta rossa + buzzer +
+messaggio in dashboard):
+
+> Humidity level < set point level for too much time! check water level!
+
+Il messaggio non si ripete mentre la condizione persiste. L'allarme si "riarma" (può
+scattare di nuovo in un episodio futuro) solo quando l'umidità torna **≥ set point**,
+momento in cui viene inviato anche un messaggio di rientro (`signal_normal_operation`,
+torretta verde): "Humidity level back to set point: alarm cleared."
+
+Logica in `MainSoftwareThread.check_humidity_low_alarm()`, chiamata ad ogni frame di
+telemetria con letture di umidità valide (`process_serial_data`).

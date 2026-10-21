@@ -872,7 +872,14 @@ class MainSoftwareThread(threading.Thread):
         
         self.hhc = self.HysteresisController(lower_limit = 20.0, upper_limit = 50.0) # humidity hysteresis controller
         self.current_humidifier_output_control = False # variabile che mi ricorda lo stato attuale dell'elettrovalvola pneumatica
-        
+
+        # HUMIDITY LOW ALARM: scatta se l'umidità scende sotto
+        # (set point - set point * deviation%) e ci resta per più di time_minutes.
+        self.humidity_alarm_deviation_percent = 20.0  # es. 20% -> soglia = set point * 0.8
+        self.humidity_alarm_time_minutes = 20         # minuti di permanenza sotto soglia prima dell'allarme
+        self._humidity_below_threshold_since = None   # istante in cui l'umidità è scesa sotto soglia, None se sopra
+        self._humidity_low_alarm_active = False       # True fra l'invio dell'allarme e il rientro (>= set point)
+
         self.whc = self.HysteresisController(lower_limit = 1.0, upper_limit = 4.0) # water hysteresis controller
         self.current_waterLevel_output_control = False # variabile che mi ricorda lo stato attuale dell'elettrovalvola per l'acqua
         
@@ -1490,6 +1497,18 @@ class MainSoftwareThread(threading.Thread):
         elif spinbox_name == "setPointHumidity_spinBox":
             self.apply_humidity_setpoint(rounded_value)
 
+        elif spinbox_name == "humidityAlarmDeviationPercent_spinBox":
+            clamped_value = min(max(rounded_value, 0.0), 100.0)
+            self.humidity_alarm_deviation_percent = clamped_value
+            self.save_parameter('HUMIDITY_ALARM_DEVIATION_PERCENT', clamped_value)
+            self.update_spinbox_value.emit("humidityAlarmDeviationPercent_spinBox", clamped_value)
+
+        elif spinbox_name == "humidityAlarmTimeMinutes_spinBox":
+            clamped_value = max(1, int(rounded_value))
+            self.humidity_alarm_time_minutes = clamped_value
+            self.save_parameter('HUMIDITY_ALARM_TIME_MINUTES', clamped_value)
+            self.update_int_spinbox_value.emit("humidityAlarmTimeMinutes_spinBox", clamped_value)
+
         elif spinbox_name == "maxHysteresisValue_waterLevelControl_spinBox":
             if rounded_value <= self.whc.get_lower_limit():
                 self.whc.set_upper_limit(rounded_value)
@@ -1606,6 +1625,39 @@ class MainSoftwareThread(threading.Thread):
         self.update_spinbox_value.emit("maxHysteresisValue_humidity_spinBox", upper)
         self.update_spinbox_value.emit("minHysteresisValue_humidity_spinBox", lower)
 
+    def check_humidity_low_alarm(self, current_humidity):
+        """
+        Allarme umidità bassa persistente. Soglia = set point - set point *
+        (humidity_alarm_deviation_percent / 100): es. set point 50% e
+        deviazione 20% -> soglia 40%.
+
+        Il messaggio di allarme viene inviato una sola volta, al superamento
+        della permanenza sotto soglia (humidity_alarm_time_minutes, default
+        20 min) - non ripetutamente finché la condizione persiste. Rientra
+        (si "riarma" per un eventuale evento successivo) solo quando
+        l'umidità torna >= set point, non appena risale sopra la soglia: una
+        isteresi volutamente più larga di quella del controllore, per non
+        rimandare un "tutto ok" mentre l'umidità sta ancora oscillando poco
+        sopra la soglia di allarme.
+        """
+        setpoint = self.get_humidity_setpoint()
+        threshold = setpoint - setpoint * (self.humidity_alarm_deviation_percent / 100.0)
+
+        if current_humidity < threshold:
+            if self._humidity_below_threshold_since is None:
+                self._humidity_below_threshold_since = time.time()
+            elif (
+                not self._humidity_low_alarm_active
+                and (time.time() - self._humidity_below_threshold_since) >= self.humidity_alarm_time_minutes * 60.0
+            ):
+                self._humidity_low_alarm_active = True
+                self.signal_alarm("Humidity level < set point level for too much time! check water level!")
+        else:
+            self._humidity_below_threshold_since = None
+            if current_humidity >= setpoint and self._humidity_low_alarm_active:
+                self._humidity_low_alarm_active = False
+                self.signal_normal_operation("Humidity level back to set point: alarm cleared.")
+
     def handle_intialization_step(self, value_name, value):
         rounded_value = round(value, 1)
         if value_name == "maxHysteresisValue_temperature_spinBox":
@@ -1620,6 +1672,10 @@ class MainSoftwareThread(threading.Thread):
             # Derivato dalla banda di isteresi, che i due valori qui sopra hanno
             # già impostato: nulla da applicare al controllore.
             pass
+        elif value_name == "humidityAlarmDeviationPercent_spinBox":
+            self.humidity_alarm_deviation_percent = rounded_value
+        elif value_name == "humidityAlarmTimeMinutes_spinBox":
+            self.humidity_alarm_time_minutes = max(1, int(rounded_value))
         elif value_name == "maxHysteresisValue_waterLevelControl_spinBox":
             self.whc.set_upper_limit(rounded_value)
         elif value_name == "minHysteresisValue_waterLevelControl_spinBox":
@@ -1897,8 +1953,13 @@ class MainSoftwareThread(threading.Thread):
             self._debounced_heater_output_hhc = self._last_output_state_hhc
             self.queue_command("HUMER01", self._debounced_heater_output_hhc)
             self.main_software_thread_log_message('INFO', f"⚙️ Debounced Humidifier state sent: {self._debounced_heater_output_hhc}")
-        
-        # WATER LEVEL CONTROL - CONTROLLER SECTION        
+
+        # Allarme umidità bassa persistente (usa la stessa lettura media appena
+        # aggiornata sopra): va valutato solo se hhc.update() ha appena girato.
+        if current_humidities:
+            self.check_humidity_low_alarm(self.hhc.get_mean_value())
+
+        # WATER LEVEL CONTROL - CONTROLLER SECTION
         #weights_kg = [round(w / 1000, 1) for w in list(current_weight.values())] # from grams to kg   - ROUNDING - non mi piace molto
         weights_kg = [math.trunc(w / 1000 * 10) / 10 for w in current_weight.values()]
         
@@ -2348,6 +2409,17 @@ class MainSoftwareThread(threading.Thread):
         # sempre, anche quando i limiti non erano ancora stati salvati e restano
         # ai default, altrimenti la dashboard parte senza riferimento.
         self.publish_humidity_setpoint()
+
+        # HUMIDITY LOW ALARM (scostamento % dal set point + minuti di persistenza)
+        humidity_alarm_deviation_percent = self.load_parameter('HUMIDITY_ALARM_DEVIATION_PERCENT')
+        if humidity_alarm_deviation_percent is not None:
+            self.humidity_alarm_deviation_percent = humidity_alarm_deviation_percent
+            self.update_spinbox_value.emit("humidityAlarmDeviationPercent_spinBox", humidity_alarm_deviation_percent)
+
+        humidity_alarm_time_minutes = self.load_parameter('HUMIDITY_ALARM_TIME_MINUTES')
+        if humidity_alarm_time_minutes is not None:
+            self.humidity_alarm_time_minutes = humidity_alarm_time_minutes
+            self.update_int_spinbox_value.emit("humidityAlarmTimeMinutes_spinBox", humidity_alarm_time_minutes)
 
         # WATER LEVEL CONTROL SPINBOX MIN/MAX
         whc_upper_limit = self.load_parameter('WATER_LEVEL_CONTROL_HYSTERESIS_CONTROLLER_UPPER_LIMIT')
@@ -3596,6 +3668,8 @@ class WebBridge:
             ("maxHysteresisValue_humidity_spinBox",         45.0),
             ("minHysteresisValue_humidity_spinBox",         25.0),
             ("setPointHumidity_spinBox",                    35.0),   # centro della banda qui sopra
+            ("humidityAlarmDeviationPercent_spinBox",       20.0),
+            ("humidityAlarmTimeMinutes_spinBox",            20.0),
             ("maxHysteresisValue_waterLevelControl_spinBox", 4.0),
             ("minHysteresisValue_waterLevelControl_spinBox", 1.0),
             ("setPointTemperature_PID_spinBox",             37.8),
