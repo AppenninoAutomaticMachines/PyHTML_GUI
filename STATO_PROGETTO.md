@@ -719,6 +719,87 @@ motore, riavvio Arduino (`handle_board_reset`), `Ctrl+C` da terminale.
 
 ---
 
+## Torretta di segnalazione (luci + buzzer)
+
+La macchina ha una torretta a 3 luci (verde/arancione/rossa) + un buzzer, pilotata dal
+comando seriale **`SIG01`**.
+
+**Classi di messaggio** (una luce ciascuna):
+
+| Classe            | Luce      | Buzzer |
+|-------------------|-----------|--------|
+| `NORMAL`          | verde     | spento |
+| `WARNING`         | arancione | spento |
+| `ALARM`           | rossa     | **acceso** |
+
+**Pattern disponibili** per pilotare luci/buzzer, calcolati dal tempo assoluto
+trascorso (`millis()`), quindi indipendenti dalla frequenza di polling del loop:
+
+- **N1 – `PATTERN_SLOW_BLINK`**: 1 s ON / 1 s OFF
+- **N2 – `PATTERN_TRIPLE_FLASH`**: 3 lampeggi veloci in 0.5 s, poi pausa di 0.8 s
+- **N3 – `PATTERN_SOLID`**: fisso ON
+
+Il mapping luce → pattern (`lightPatternMap[]`, `buzzerPatternForAlarm` in
+`arduinoEggIncubator.ino`) è una scelta fatta in fase di inizializzazione/flash del
+firmware, non configurabile a runtime: per cambiarlo va rifatto il flash della scheda.
+
+All'avvio Arduino si porta da solo in stato `SIG_NORMAL` (verde) già in `setup()`,
+prima ancora che il Python si connetta; il backend invia poi esplicitamente un
+comando `SIG01 NORMAL` di conferma appena l'inizializzazione è completata.
+
+### API Python
+
+Sul `MainSoftwareThread`:
+
+```python
+self.signal_normal_operation(testo=None)
+self.signal_warning(testo=None)
+self.signal_alarm(testo=None)
+```
+
+Ciascun metodo invia sempre il comando `SIG01` ad Arduino (con ACK). Il parametro
+opzionale `testo`, se valorizzato, mostra **anche** un messaggio nella dashboard web
+(sezione "Machine Messages"); se omesso, non succede nient'altro.
+
+## Dashboard — sezione "Machine Messages"
+
+Nella pagina Dashboard è presente una lista dinamica di messaggi, popolata in tempo
+reale via Socket.IO (`update_machine_message` → evento `machine_message`):
+
+- ogni riga è colorata con lo sfondo/bordo dello stesso colore della classe di
+  segnalazione (verde/arancione/rosso);
+- ogni messaggio ha una **✕** per rimuoverlo dalla visualizzazione (solo lato
+  browser corrente, non modifica lo storico condiviso);
+- un pulsante **Reset all** svuota la lista visualizzata (anch'esso solo lato
+  browser);
+- lo storico (ultimi 100 messaggi) viene mantenuto server-side e reinviato ai nuovi
+  browser che si collegano tramite `full_state`, quindi un refresh della pagina può
+  far riapparire messaggi già rimossi in precedenza.
+
+## Allarme umidità bassa (Control → Water & Humidity)
+
+Due parametri modificabili nella card "Humidity Low Alarm":
+
+- **Deviation from set point (%)** — `humidityAlarmDeviationPercent_spinBox`, default 20%
+- **Persistence time (min)** — `humidityAlarmTimeMinutes_spinBox`, default 20 min
+
+La soglia di allarme è `set point - set point * deviazione%`: con set point 50% e
+deviazione 20% la soglia è 40%. Se l'umidità (media letta dal controllore a isteresi,
+`hhc.get_mean_value()`) resta sotto quella soglia per più dei minuti impostati, viene
+inviato **una sola volta** un allarme (`signal_alarm`, torretta rossa + buzzer +
+messaggio in dashboard):
+
+> Humidity level < set point level for too much time! check water level!
+
+Il messaggio non si ripete mentre la condizione persiste. L'allarme si "riarma" (può
+scattare di nuovo in un episodio futuro) solo quando l'umidità torna **≥ set point**,
+momento in cui viene inviato anche un messaggio di rientro (`signal_normal_operation`,
+torretta verde): "Humidity level back to set point: alarm cleared."
+
+Logica in `MainSoftwareThread.check_humidity_low_alarm()`, chiamata ad ogni frame di
+telemetria con letture di umidità valide (`process_serial_data`).
+
+
 ## Possibili prossimi passi (idee)
 
 - [ ] Notifiche/allarmi in-browser quando la temperatura esce dal range (badge rosso in sidebar)
