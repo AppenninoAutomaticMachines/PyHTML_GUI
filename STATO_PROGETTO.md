@@ -3,6 +3,46 @@ Aggiornato: 2026-09-25
 
 ---
 
+# Automatic Egg Incubator — Python/HTML GUI
+
+Controllo di un'incubatrice automatica per uova: firmware Arduino Mega lato macchina
++ backend Python (Flask / Flask-SocketIO) con dashboard web, al posto della vecchia GUI
+desktop PyQt5.
+
+## Architettura
+
+- **`arduinoEggIncubator/arduinoEggIncubator.ino`** — firmware Arduino Mega: lettura
+  sensori (temperature, umidità, cella di carico), pilotaggio attuatori (riscaldatore,
+  umidificatore, elettrovalvola acqua, ventole, motore girauova), finecorsa, e la
+  torretta di segnalazione (vedi sotto).
+- **`eggsIncubatorMVVM.py`** — backend Python: `SerialThread` (comunicazione seriale
+  con Arduino), `MainSoftwareThread` (logica di controllo, PID/isteresi, statistiche,
+  parametri persistenti), e un server Flask + Flask-SocketIO (`WebBridge`) che espone
+  tutto alla dashboard web.
+- **`templates/index.html`** — dashboard web (Bootstrap + Socket.IO + Plotly), con
+  4 temi colore, selezione lingua IT/EN e pagine per dashboard, grafici live, storico,
+  statistiche, controllo temperatura/acqua/motore e impostazioni.
+
+## Protocollo seriale Arduino ↔ Python
+
+I due lati comunicano con un framing testuale: `@<TAG1,val1><TAG2,val2,uid>...#`.
+Entrambi i lati parsano il frame in modo generico — aggiungere un nuovo comando non
+richiede toccare il parsing/framing, solo la gestione del singolo tag.
+
+- **Python → Arduino (comandi):** la lista `command_tags` decide se un comando
+  richiede ACK: ai tag presenti viene aggiunto un `uid` (esadecimale) e
+  `SerialThread` ne attende la conferma, con retry automatico su timeout
+  (`ack_timeout`, `max_retries`). I tag assenti dalla lista (es. `ALIVE`) sono
+  fire-and-forget.
+- **Arduino → Python (telemetria):** i token in uscita sono accodati con
+  `queueOutgoing("<TAG,%s>", value)`; la lista `identifiers` lato Python decide
+  quali tag in ingresso vengono raccolti come dati di telemetria (temperature,
+  umidità, peso acqua, finecorsa, ecc.).
+- Limiti di buffer lato Arduino (niente `String`, solo buffer a dimensione fissa,
+  per evitare frammentazione dell'heap): `TAG_LEN=10`, `VALUE_LEN=16`,
+  `UID_LEN=12`, `OUTGOING_ITEM_LEN=24`, `INCOMING_CMD_LEN=32`.
+  
+
 ## Cosa è stato fatto (in ordine cronologico)
 
 ### 1. Migrazione GUI PyQt5 → Interfaccia Web
