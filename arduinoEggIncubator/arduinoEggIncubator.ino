@@ -302,8 +302,8 @@ SignalOutput buzzerOutput = { PIN_BUZZER, PATTERN_OFF, 0, false };
 
 LightPattern lightPatternMap[NUMBER_OF_MACHINE_SIGNALS] = {
   PATTERN_SOLID,        // SIG_NORMAL  (verde)
-  PATTERN_SLOW_BLINK,   // SIG_WARNING (arancione)
-  PATTERN_TRIPLE_FLASH, // SIG_ALARM   (rosso)
+  PATTERN_SOLID,   // SIG_WARNING (arancione)
+  PATTERN_SOLID, // SIG_ALARM   (rosso)
 };
 LightPattern buzzerPatternForAlarm = PATTERN_SLOW_BLINK;
 
