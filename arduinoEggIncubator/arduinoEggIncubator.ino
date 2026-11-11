@@ -127,6 +127,14 @@ bool alive_bit = false;
 unsigned long last_serial_alive_time = 0;
 unsigned long serial_alive_timeout_ms = 4000;
 bool serial_communication_is_ok = false;
+/*
+   Distinto da serial_communication_is_ok: quest'ultimo parte false all'avvio e lo
+   stesso false lo rappresenta sia "non ho ancora mai sentito Python" sia "lo sentivo
+   e si è interrotto". commsLossAlarmActive invece segue solo se la torretta è stata
+   forzata in SIG_ALARM dal failsafe, per sapere quando ripristinarla - copre anche il
+   caso di avvio senza RPi collegato, non solo la perdita di un collegamento già attivo.
+*/
+bool commsLossAlarmActive = false;
 
 /* TEMPERATURES SECTION */
 // GENERAL
@@ -271,6 +279,10 @@ float waterWeight_saturated = 5000.0;
    Il mapping luce/buzzer -> pattern (lightPatternMap, buzzerPatternForAlarm)
    è deciso qui in inizializzazione: va rivisto a ogni flash del firmware in
    base a cosa si vuole segnalare con quale pattern.
+
+   la torretta luminosa che ho acquistato, per come è fatta, ha già un lampeggio integrato per le luci. Quindi, con questo modello specifico, è sufficiente dare tensione per far lampeggiare la luce.
+   lascio però la predisposizione per le varie modalità di flashing nel caso di altri dispositivi luminosi.
+   Il buzzer, invece, va gestito a mano.
 */
 typedef enum {
   SIG_NORMAL  = 0,
@@ -300,14 +312,26 @@ SignalOutput lightOutputs[NUMBER_OF_MACHINE_SIGNALS] = {
 };
 SignalOutput buzzerOutput = { PIN_BUZZER, PATTERN_OFF, 0, false };
 
+/* Alle luci dò sempre tensione fissa per costruzione. Hanno lampeggio integrato. */
 LightPattern lightPatternMap[NUMBER_OF_MACHINE_SIGNALS] = {
   PATTERN_SOLID,        // SIG_NORMAL  (verde)
-  PATTERN_SOLID,   // SIG_WARNING (arancione)
-  PATTERN_SOLID, // SIG_ALARM   (rosso)
+  PATTERN_SOLID,        // SIG_WARNING (arancione)
+  PATTERN_SOLID,        // SIG_ALARM   (rosso)
 };
+
+/* Il buzzer invece deve essere comandato da noi con slow blink. Il triple flash non lavora bene, non è abbastanza rapido il cicalino. */
 LightPattern buzzerPatternForAlarm = PATTERN_SLOW_BLINK;
 
 MachineSignal currentMachineSignal = SIG_NORMAL;
+
+/*
+   Ultimo stato commandato da Python via SIG01, distinto da currentMachineSignal:
+   durante una perdita di comunicazione (ALIVE assente oltre serial_alive_timeout_ms)
+   la torretta viene forzata in SIG_ALARM in autonomia, ma senza perdere di vista cosa
+   avesse deciso Python. Al ritorno dell'ALIVE si ripristina questo valore, invece di
+   restare in allarme o tornare ciecamente a SIG_NORMAL.
+*/
+MachineSignal lastCommandedMachineSignal = SIG_NORMAL;
 /* END MACHINE SINGALING DEVICE - SECTION */
 
 // SENDING TO RPY
@@ -556,6 +580,13 @@ void loop() {
       if (splitCommand(receivedCommands[j], tag, sizeof(tag), value, sizeof(value), uid, sizeof(uid))) {
         if (strcmp(tag, "ALIVE") == 0) {
           last_serial_alive_time = millis();
+          if (commsLossAlarmActive) {
+            // Primo ALIVE dopo un periodo di silenzio (incluso il caso "mai sentito
+            // Python dall'avvio"): la torretta era stata forzata in SIG_ALARM in
+            // autonomia, ora si riallinea a Python.
+            commsLossAlarmActive = false;
+            setMachineSignal(lastCommandedMachineSignal);
+          }
           if (strcmp(value, "True") == 0) {
             alive_bit = true;
             serial_communication_is_ok = true;
@@ -639,10 +670,13 @@ void loop() {
 
         if (strcmp(tag, "SIG01") == 0) {
           if (strcmp(value, "NORMAL") == 0) {
+            lastCommandedMachineSignal = SIG_NORMAL;
             setMachineSignal(SIG_NORMAL);
           } else if (strcmp(value, "WARNING") == 0) {
+            lastCommandedMachineSignal = SIG_WARNING;
             setMachineSignal(SIG_WARNING);
           } else if (strcmp(value, "ALARM") == 0) {
+            lastCommandedMachineSignal = SIG_ALARM;
             setMachineSignal(SIG_ALARM);
           }
           if(strlen(uid) > 0){
@@ -664,6 +698,14 @@ void loop() {
   }
   else{
     if(millis() - last_serial_alive_time > serial_alive_timeout_ms){
+      if (!commsLossAlarmActive) {
+        // Silenzio seriale prolungato (sia perché il collegamento con Python si è
+        // interrotto, sia perché non è mai arrivato il primo ALIVE dall'avvio): la
+        // macchina va in allarme in autonomia, senza aspettare un SIG01 da Python
+        // che qui non può più arrivare.
+        commsLossAlarmActive = true;
+        setMachineSignal(SIG_ALARM);
+      }
       serial_communication_is_ok = false;
       eggsTurnerStepperMotor.stopMotor();
       digitalWrite(HEATER_PIN, LOW);

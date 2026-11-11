@@ -1,5 +1,5 @@
 # Stato progetto – Incubatrice Automatica
-Aggiornato: 2026-09-25
+Aggiornato: 2026-11-11
 
 ---
 
@@ -783,9 +783,68 @@ Il mapping luce → pattern (`lightPatternMap[]`, `buzzerPatternForAlarm` in
 `arduinoEggIncubator.ino`) è una scelta fatta in fase di inizializzazione/flash del
 firmware, non configurabile a runtime: per cambiarlo va rifatto il flash della scheda.
 
+**Mapping attuale (di default):** tutte e tre le luci usano **N3 – `PATTERN_SOLID`**
+(fisso ON quando accese), il buzzer usa **N1 – `PATTERN_SLOW_BLINK`** per `ALARM`.
+Scelta dettata dall'hardware realmente montato: la torretta luminosa acquistata ha
+già un lampeggio integrato nelle luci stesse, quindi per farle lampeggiare basta
+dargli tensione — usare anche `PATTERN_SLOW_BLINK`/`PATTERN_TRIPLE_FLASH` lato
+firmware le farebbe lampeggiare "a scatti" sopra il loro lampeggio nativo. I pattern
+N1/N2 restano comunque predisposti nell'enum per eventuali dispositivi luminosi futuri
+senza blink integrato. Il buzzer invece non ha alcun comportamento proprio e va
+sempre pilotato a mano, da cui `PATTERN_SLOW_BLINK` per segnalare l'allarme.
+
 All'avvio Arduino si porta da solo in stato `SIG_NORMAL` (verde) già in `setup()`,
 prima ancora che il Python si connetta; il backend invia poi esplicitamente un
 comando `SIG01 NORMAL` di conferma appena l'inizializzazione è completata.
+
+### Allarme autonomo su perdita di comunicazione con RPi (incluso l'avvio senza RPi collegato)
+
+Arduino rileva già da solo l'assenza del tag `ALIVE` (`serial_alive_timeout_ms`,
+4 s) per mettere in sicurezza gli attuatori (motore, riscaldatore, umidificatore,
+elettrovalvola, ventole — vedi il ramo `else` in `loop()`). La torretta ora segue
+la stessa logica, **sia per una comunicazione che si interrompe sia per
+l'assenza del primo contatto dall'accensione**:
+
+- **Al superare il timeout** (transizione, non ad ogni giro di `loop()`): la
+  macchina si porta da sola in `SIG_ALARM` (torretta rossa + buzzer), senza
+  aspettare un comando `SIG01` da Python — che in questa condizione non può più
+  arrivare. Questo vale anche nei primi 4 s dopo l'accensione se Python non ha
+  ancora mandato nessun `ALIVE` (es. RPi ancora in boot, server non ancora
+  partito, cavo scollegato): passato il timeout la macchina non resta verde in
+  attesa, va in allarme.
+- **Al primo `ALIVE` ricevuto** (altra transizione, sia il primissimo dall'avvio
+  sia un ripristino dopo un'interruzione): la torretta torna allo stato
+  **deciso da Python**, non automaticamente a `SIG_NORMAL`. Arduino tiene
+  traccia dell'ultimo `SIG01` ricevuto in `lastCommandedMachineSignal`
+  (`arduinoEggIncubator.ino`), distinto da `currentMachineSignal` che riflette
+  lo stato *attuale* mostrato dalla torretta (può essere stato forzato ad
+  `ALARM` dal failsafe). Al contatto viene richiamato
+  `setMachineSignal(lastCommandedMachineSignal)`, così se la macchina era già in
+  `WARNING`/`ALARM` per un motivo di processo (non di comunicazione) quello stato
+  non viene perso, e se era `NORMAL` ci si torna.
+- La transizione è tracciata da un flag dedicato, `commsLossAlarmActive`,
+  **distinto** da `serial_communication_is_ok`: quest'ultimo parte `false`
+  all'avvio e quel valore da solo non distingue "mai sentito Python" da "lo
+  sentivo e si è interrotto" — da cui la variabile separata. Entrambe le
+  chiamate a `setMachineSignal()` avvengono solo quando il flag cambia, non ad
+  ogni pacchetto: chiamarla di continuo resetterebbe `patternStartTime` ad ogni
+  giro, congelando di fatto i pattern a tempo (es. il buzzer in
+  `PATTERN_SLOW_BLINK` resterebbe fisso invece di lampeggiare).
+- `setMachineSignal(SIG_NORMAL)` chiamato esplicitamente in `setup()` resta
+  comunque il primo stato mostrato (verde) nei primi 4 s di grazia subito dopo
+  l'accensione, prima che scatti il timeout: è lo stesso margine temporale già
+  esistente per `serial_alive_timeout_ms`, non un'attesa aggiuntiva.
+
+**Da testare sul Pi/Mega:**
+1. Avviare l'Arduino **senza** il processo Python collegato: dopo ~4 s la
+   torretta deve andare rossa con buzzer lampeggiante (non restare verde).
+   Avviando poi Python, al primo `ALIVE` la torretta deve tornare verde (stato
+   di default inviato da Python all'avvio).
+2. Con tutto già funzionante, scollegare il cavo seriale (o fermare il processo
+   Python) per più di 4 s e verificare lo stesso passaggio a rosso/buzzer;
+   ricollegando, verificare che torni allo stato che Python aveva comandato
+   prima dell'interruzione (non necessariamente verde, se nel frattempo era già
+   stato impostato un `WARNING`/`ALARM` applicativo).
 
 ### API Python
 
